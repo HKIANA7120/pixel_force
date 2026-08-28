@@ -15,7 +15,7 @@
 <body>
 <div id="wrap">
 <canvas id="game" width="960" height="540"></canvas>
-<div id="hint">로프 근처 [W/S] 오르내리기 / [Q] 다이너마이트 / [B] 상점 / [L] 로비 무기고</div>
+<div id="hint">이동[W/A/S/D] / 대시[SHIFT] / 사격[SPACE] / 다이너마이트[Q] / 상점[B] / 무기고[L]</div>
 </div>
 <script>
 (function(){
@@ -47,6 +47,10 @@ function playSnd(type){
     osc.type='sine'; osc.frequency.setValueAtTime(300,now); osc.frequency.linearRampToValueAtTime(600,now+0.15);
     gain.gain.setValueAtTime(0.1,now); gain.gain.linearRampToValueAtTime(0,now+0.15);
     osc.start(now); osc.stop(now+0.15);
+  } else if(type==='dash'){
+    osc.type='sawtooth'; osc.frequency.setValueAtTime(500,now); osc.frequency.exponentialRampToValueAtTime(100,now+0.2);
+    gain.gain.setValueAtTime(0.15,now); gain.gain.linearRampToValueAtTime(0,now+0.2);
+    osc.start(now); osc.stop(now+0.2);
   } else if(type==='coin'){
     osc.type='square'; osc.frequency.setValueAtTime(800,now); osc.frequency.setValueAtTime(1200,now+0.05);
     gain.gain.setValueAtTime(0.05,now); gain.gain.linearRampToValueAtTime(0,now+0.1);
@@ -65,8 +69,8 @@ function playSnd(type){
 // ---------------------------------------------------------------
 // KEY BINDINGS & INPUT
 // ---------------------------------------------------------------
-let actionKeys = { left:'KeyA', right:'KeyD', jump:'KeyW', down:'KeyS', shoot:'Space', reload:'KeyR', shop:'KeyB', item:'KeyQ' };
-const actionNames = { left:'이동 (좌)', right:'이동 (우)', jump:'점프 / 오르기', down:'내려가기', shoot:'사격', reload:'재장전', shop:'상점 열기', item:'아이템 사용' };
+let actionKeys = { left:'KeyA', right:'KeyD', jump:'KeyW', down:'KeyS', shoot:'Space', dash:'ShiftLeft', reload:'KeyR', shop:'KeyB', item:'KeyQ' };
+const actionNames = { left:'이동 (좌)', right:'이동 (우)', jump:'점프 / 오르기', down:'내려가기', shoot:'사격', dash:'대시(회피)', reload:'재장전', shop:'상점 열기', item:'다이너마이트' };
 
 const keys = {};
 window.addEventListener('keydown', e=>{
@@ -100,7 +104,6 @@ let equippedGun = parseInt(localStorage.getItem('pf_equip')||'0');
 let equippedSkin = parseInt(localStorage.getItem('pf_skin')||'0');
 let earnedCoinsThisRun = 0;
 
-// COMBO SYSTEM
 let combo = 0; 
 let comboTimer = 0; 
 
@@ -117,8 +120,34 @@ function addCombo() {
 }
 
 // ---------------------------------------------------------------
-// PARTICLES & EFFECTS
+// FLOATING TEXT & PARTICLES
 // ---------------------------------------------------------------
+let floatingTexts = [];
+function spawnText(x, y, text, color, scale = 1.0, life = 1.0) {
+    floatingTexts.push({ x, y, text, color, scale, life, maxLife: life, vy: -40 });
+}
+function updateFloatingTexts(dt) {
+    for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        let ft = floatingTexts[i];
+        ft.life -= dt;
+        ft.y += ft.vy * dt;
+        if (ft.life <= 0) floatingTexts.splice(i, 1);
+    }
+}
+function drawFloatingTexts() {
+    for (const ft of floatingTexts) {
+        ctx.save();
+        ctx.globalAlpha = clamp(ft.life / (ft.maxLife*0.5), 0, 1); // 서서히 사라짐
+        ctx.fillStyle = ft.color;
+        ctx.font = `bold ${Math.floor(14 * ft.scale)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3; ctx.strokeStyle = '#000';
+        ctx.strokeText(ft.text, ft.x, ft.y);
+        ctx.fillText(ft.text, ft.x, ft.y);
+        ctx.restore();
+    }
+}
+
 let particles = [];
 function spawnParticles(x,y,count,colors,speed,life,size){
   for(let i=0;i<count;i++){
@@ -165,7 +194,7 @@ function applyStage(idx){
     props.push({ x:rand(p.x+10, p.x+p.w-30), y:p.y-24, w:24, h:24, hp:40, maxHp:40, dead:false });
   }
   banner = {text:'STAGE '+(idx+1)+' : '+st.name, timer:2.6};
-  enemies = []; bullets = []; dynamites = []; particles = []; items = []; waveEnemiesToSpawn = 0;
+  enemies = []; bullets = []; dynamites = []; particles = []; items = []; floatingTexts = []; waveEnemiesToSpawn = 0;
   if(player){ player.x = 200; player.y = GROUND_Y-1; player.vx=0; player.vy=0; player.invuln = 1.0; player.climbing=false; player.jumpCount=0; }
 }
 
@@ -199,6 +228,7 @@ let props = []; let items = []; let dynamites = [];
 function damageProp(prop, dmg){
   prop.hp -= dmg; playSnd('hit');
   spawnParticles(prop.x+12, prop.y+12, 5, ['#8a5a34','#6b4326','#c9a227'], 150, 0.4, 4);
+  spawnText(prop.x+12, prop.y-10, `${dmg}`, '#fff', 0.8, 0.5);
   if(prop.hp <= 0 && !prop.dead){
     prop.dead = true; addShake(4); playSnd('exp');
     spawnParticles(prop.x+12, prop.y+12, 20, ['#8a5a34','#6b4326','#4a2e1a'], 250, 0.6, 5);
@@ -223,11 +253,15 @@ function updateItems(dt){
     
     if(player.alive && aabb(it, {x:player.x-10, y:player.y-38, w:20, h:38})){
       if(it.type === 'gold'){
-        // 캐릭터 특성 골드 증가 (보안관 15% 보너스)
         let goldGain = 10;
         if (player.classId === 0) goldGain = Math.floor(goldGain * 1.15);
         gold += goldGain; 
         spawnParticles(it.x+5, it.y+5, 4, ['#ffff00','#ffcf6a'], 80, 0.3, 3); playSnd('coin');
+      }
+      else if(it.type === 'heal'){
+        player.hp = Math.min(player.maxHp, player.hp + 30);
+        spawnParticles(it.x+5, it.y+5, 12, ['#ff0000','#ffffff'], 120, 0.5, 4); playSnd('coin');
+        spawnText(player.x, player.y - 40, "+30 HP", "#0f0", 1.2, 1);
       }
       items.splice(i,1);
     }
@@ -248,6 +282,10 @@ function drawItems(){
     if(it.type === 'gold'){
       ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(it.x+5, it.y+5, 5, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = '#ffaa00'; ctx.beginPath(); ctx.arc(it.x+5, it.y+5, 3, 0, Math.PI*2); ctx.fill();
+    }
+    else if(it.type === 'heal'){ // 힐 아이템 (십자가 박스 모양)
+      ctx.fillStyle = '#fff'; ctx.fillRect(it.x, it.y, 12, 12);
+      ctx.fillStyle = '#ff0000'; ctx.fillRect(it.x+4, it.y+2, 4, 8); ctx.fillRect(it.x+2, it.y+4, 8, 4);
     }
   }
 }
@@ -277,7 +315,6 @@ function explodeDynamite(x,y, from, customDmg=0){
   playSnd('exp'); addShake(15);
   spawnParticles(x,y,60,['#ff0000','#ffaa00','#ffff00','#ffffff'], 450, 1.0, 5);
   
-  // 플레이어나 자폭병 폭발이 다른 적에게 데미지를 줌 (연쇄 폭발 가능!)
   if(from === 'player' || from === 'enemy_bomber'){
     let dmg = from === 'player' ? (250 + shopStats.dmg.val) : (customDmg || 100);
     for(const en of enemies){
@@ -289,14 +326,12 @@ function explodeDynamite(x,y, from, customDmg=0){
   } 
   
   if(from !== 'player'){
-    // 적의 폭탄이나 자폭병은 플레이어에게 피해를 줌
     if(player.alive && Math.hypot(player.x-x, player.y-19-y) < 120){
       let dmgBase = customDmg || (40 * (1 + waveNum*0.1)); 
       damagePlayer(dmgBase); 
     }
   }
   
-  // Props break universally
   for(const p of props){
     if(!p.dead && Math.hypot((p.x+12)-x, (p.y+12)-y) < 120) damageProp(p, 200);
   }
@@ -379,7 +414,8 @@ const shopStats = {
 const player = {
   x:200, y:GROUND_Y-1, w:14, h:38, vx:0, vy:0, onGround:false, climbing:false, jumpCount:0,
   facing:1, hp:100, maxHp:100, ammo:10, maxAmmo:10, reloading:false, reloadTime:1.1, reloadTimer:0,
-  shootCd:0, shootCdMax:0.22, dynaCd:0, walkPhase:0, invuln:0, alive:true, speed: 250,
+  shootCd:0, shootCdMax:0.22, dynaCd:0, dashCd:0, isDashing:false, dashTime:0, 
+  walkPhase:0, invuln:0, alive:true, speed: 250,
   classId: 0, dmgTakenMult: 1.0
 };
 function playerRect(){ return {x:player.x-7, y:player.y-38, w:14, h:38}; }
@@ -392,12 +428,9 @@ function applyClassStats() {
   let baseHp = shopStats.maxHp.val;
 
   if (player.classId === 1) { // Bandit
-    baseSpd *= 1.2;
-    player.dmgTakenMult = 1.2; // takes more damage
+    baseSpd *= 1.2; player.dmgTakenMult = 1.2; 
   } else if (player.classId === 2) { // Cyborg
-    baseHp += 50;
-    player.dmgTakenMult = 0.8; // takes less damage
-    baseSpd *= 0.9;
+    baseHp += 50; player.dmgTakenMult = 0.8; baseSpd *= 0.9;
   }
   
   player.speed = baseSpd;
@@ -407,13 +440,12 @@ function applyClassStats() {
 function syncStats(){ 
   player.maxAmmo = shopStats.ammo.val; player.reloadTime = shopStats.reload.val; 
   applyClassStats();
-  
   let tier = shopStats.gunTier.level;
   if (tier === 0) player.shootCdMax = 0.22; else if (tier === 1) player.shootCdMax = 0.22; else if (tier === 2) player.shootCdMax = 0.4; else if (tier === 3) player.shootCdMax = 0.12; 
 }
 
 function resetPlayer(){
-  player.x=200; player.y=GROUND_Y-1; player.vx=0; player.vy=0; player.climbing = false; player.jumpCount = 0; player.dynaCd = 0;
+  player.x=200; player.y=GROUND_Y-1; player.vx=0; player.vy=0; player.climbing = false; player.jumpCount = 0; player.dynaCd = 0; player.dashCd = 0; player.isDashing = false;
   player.hp=100; player.ammo=10; player.reloading=false; player.reloadTimer=0; player.shootCd=0; player.invuln=0; player.alive=true; player.facing=1;
   gold = 0; combo = 0; comboTimer = 0;
   
@@ -429,7 +461,12 @@ function resetPlayer(){
 // BULLETS & COMBAT
 // ---------------------------------------------------------------
 let bullets = [];
-function spawnBullet(x,y,vx,vy,from, life=1.5, dmg=0){ bullets.push({x,y,vx,vy,from,dead:false,life:life, dmg:dmg}); }
+function spawnBullet(x,y,vx,vy,from, life=1.5, dmg=0){ 
+  // 플레이어가 쏘는 총알은 20% 확률로 크리티컬!
+  let isCrit = false;
+  if(from === 'player') isCrit = Math.random() < 0.20;
+  bullets.push({x,y,vx,vy,from,dead:false,life:life, dmg:dmg, isCrit:isCrit}); 
+}
 
 function updateBullets(dt){
   for(let i=bullets.length-1;i>=0;i--){
@@ -444,10 +481,18 @@ function updateBullets(dt){
     if(b.from==='player'){
       for(const en of enemies){
         if(!en.alive) continue;
-        if(aabb(br, enemyRect(en))){ damageEnemy(en, shopStats.dmg.val, b.x, b.y, b.vx, 'player'); bullets.splice(i,1); break; }
+        if(aabb(br, enemyRect(en))){ 
+          let finalDmg = shopStats.dmg.val;
+          if(b.isCrit) finalDmg = Math.floor(finalDmg * 2); // 크리티컬 데미지!
+          
+          damageEnemy(en, finalDmg, b.x, b.y, b.vx, 'player', b.isCrit); 
+          bullets.splice(i,1); break; 
+        }
       }
     } else {
-      if(player.alive && player.invuln<=0 && aabb(br, playerRect())){ damagePlayer(b.dmg || 14); bullets.splice(i,1); }
+      if(player.alive && player.invuln<=0 && !player.isDashing && aabb(br, playerRect())){ 
+        damagePlayer(b.dmg || 14); bullets.splice(i,1); 
+      }
     }
   }
 }
@@ -455,7 +500,9 @@ function drawBullets(){
   for(const b of bullets){
     const bx = Math.round(b.x); const by = Math.round(b.y); const isPlayer = b.from === 'player';
     ctx.fillStyle = '#0a0502'; ctx.fillRect(bx - 5, by - 3, 10, 6);
-    ctx.fillStyle = isPlayer ? '#ffb347' : '#e62200'; ctx.fillRect(bx - 4, by - 2, 8, 4);
+    // 크리티컬 총알은 노란색으로 빛남
+    ctx.fillStyle = b.isCrit ? '#ffea00' : (isPlayer ? '#ffb347' : '#e62200'); 
+    ctx.fillRect(bx - 4, by - 2, 8, 4);
     ctx.fillStyle = '#ffffff'; ctx.fillRect(bx - 2, by - 1, 6, 2);
   }
 }
@@ -468,8 +515,6 @@ function enemyRect(en){ const w = 7 * en.scale; const h = 38 * en.scale; return 
 
 function makeEnemy(type){
   const fromLeft = Math.random()<0.5; const spawnDist = camera.x + (fromLeft ? -50 : W + 50); const ex = clamp(spawnDist, 10, WORLD_W-10);
-  
-  // 난이도 모드 스케일링 (Nightmare는 2.2배)
   let diffMod = 1.0;
   if (difficultyMode === 'hard') diffMod = 1.5;
   if (difficultyMode === 'nightmare') diffMod = 2.2;
@@ -481,13 +526,11 @@ function makeEnemy(type){
   let bossLevel = Math.floor(waveNum / 5);
 
   if(type === 'boss'){ 
-    let bHp = 800 * hpMul * diffMod;
-    let bSpeed = 45 * speedMul * diffMod;
+    let bHp = 800 * hpMul * diffMod; let bSpeed = 45 * speedMul * diffMod;
     return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?bSpeed:-bSpeed, vy:0, hp:bHp, maxHp:bHp, alive:true, walkPhase:0, 
              shootCd: 1.5, skillCd: 3.0, bossLevel: bossLevel, onGround:true, scale: clamp(2.5 + bossLevel*0.2, 2.5, 4.0), dmgBase: 25*dmgMul }; 
   } 
   else if(type==='bomber'){
-    // 자폭병 (매우 빠르고 체력은 낮음)
     let spd = clamp(110 * speedMul * diffMod, 110, 400);
     return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?spd:-spd, vy:0, hp:30*hpMul*diffMod, maxHp:30*hpMul*diffMod, alive:true, walkPhase:rand(0,6), onGround:true, scale: 1, dmgBase: 50*dmgMul, fuse: 0 };
   }
@@ -503,13 +546,10 @@ function startWave(){
   waveNum++;
   if(waveNum % 5 === 0) {
     banner = {text:`WARNING: LV.${Math.floor(waveNum/5)} BOSS APPROACHING!`, timer:3.5}; 
-    
     let bossesToSpawn = 1;
     if (difficultyMode === 'nightmare' && waveNum >= 15) bossesToSpawn = 2;
     for(let i=0; i<bossesToSpawn; i++) enemies.push(makeEnemy('boss')); 
     addShake(20);
-    
-    // 악몽 모드면 보스와 함께 잡몹 추가 스폰
     waveEnemiesToSpawn = difficultyMode === 'nightmare' ? 6 : 0;
   } else { 
     let baseCount = 3 + waveNum*1.8;
@@ -521,20 +561,24 @@ function startWave(){
   spawnTimer = 0.2;
 }
 
-function damageEnemy(en, dmg, hx, hy, bulletVx, source='player'){
+function damageEnemy(en, dmg, hx, hy, bulletVx, source='player', isCrit = false){
   en.hp -= dmg; playSnd('hit');
-  spawnParticles(hx, hy, 12, ['#ff0000','#aa0000','#770000'], Math.abs(bulletVx)*0.3 + 100, 0.4, 3);
-  addShake(2);
+  
+  // 크리티컬 이펙트 및 플로팅 데미지 텍스트 
+  if (isCrit) {
+    spawnParticles(hx, hy, 18, ['#ffff00','#ffaa00','#ffffff'], Math.abs(bulletVx)*0.4 + 150, 0.5, 4);
+    spawnText(en.x, en.y - 45 - (en.scale*10), `CRIT ${dmg}!`, '#ffeb3b', 1.5, 1.0);
+    addShake(5);
+  } else {
+    spawnParticles(hx, hy, 12, ['#ff0000','#aa0000','#770000'], Math.abs(bulletVx)*0.3 + 100, 0.4, 3);
+    spawnText(en.x, en.y - 35 - (en.scale*10), `${dmg}`, '#ffffff', 1.0, 0.7);
+    addShake(2);
+  }
   
   if(en.hp<=0 && en.alive){
     en.alive = false; let coins = 0; playSnd('exp');
+    if(en.type === 'bomber'){ explodeDynamite(en.x, en.y, 'enemy_bomber', en.dmgBase); }
     
-    // 자폭병은 죽을 때 폭발함!
-    if(en.type === 'bomber'){
-      explodeDynamite(en.x, en.y, 'enemy_bomber', en.dmgBase);
-    }
-    
-    // 플레이어가 죽인 경우 콤보 및 보상 처리
     if(source === 'player'){
       addCombo();
       let comboMultiplier = 1 + (combo * 0.1); 
@@ -549,19 +593,24 @@ function damageEnemy(en, dmg, hx, hy, bulletVx, source='player'){
         spawnParticles(en.x, en.y-20, 25, ['#ff0000','#aa0000','#550000'], 250, 0.6, 4); 
       }
       spawnCoin(en.x, en.y-20, coins);
+      
+      // 10% 확률로 하트(회복 아이템) 드랍
+      if (Math.random() < 0.1) {
+        items.push({ type:'heal', x:en.x, y:en.y-20, vx:rand(-100,100), vy:rand(-250,-150), w:12, h:12, life:10, onGround:false });
+      }
     }
   }
 }
 
 function damagePlayer(dmg){
-  if(player.invuln>0) return;
-  // 방어력과 클래스 특성(받는 피해 증감) 적용
-  let actualDmg = dmg * (1 - shopStats.armor.val) * player.dmgTakenMult; 
+  if(player.invuln>0 || player.isDashing) return;
+  let actualDmg = Math.floor(dmg * (1 - shopStats.armor.val) * player.dmgTakenMult); 
   playSnd('hit');
   
   player.hp -= actualDmg; player.invuln = 0.6; addShake(10);
-  combo = 0; // 맞으면 콤보 초기화
+  combo = 0; 
   spawnParticles(player.x, player.y-20, 14, ['#ff3a3a','#a80000','#ffdada'], 260, 0.5, 4);
+  spawnText(player.x, player.y-40, `-${actualDmg}`, '#ff3a3a', 1.2, 1);
   
   if(player.hp<=0){ 
     player.hp = 0; player.alive = false; gameState = 'gameover'; 
@@ -581,8 +630,6 @@ function updateEnemies(dt){
 
     if(en.type === 'boss'){
       en.vx = dir * Math.abs(en.vx); en.shootCd -= dt; en.skillCd -= dt;
-      
-      // 1. 일반 사격 (레벨업 할수록 산탄 갯수 증가)
       if(en.shootCd <= 0 && player.alive){
         const gunY = en.y - (26 * en.scale * 0.7); const baseAng = Math.atan2((player.y-19) - gunY, player.x-en.x);
         let spread = clamp(3 + Math.floor(en.bossLevel / 2) + (difficultyMode==='nightmare'?3:0), 3, 11); 
@@ -595,8 +642,6 @@ function updateEnemies(dt){
         en.shootCd = Math.max(0.4, (difficultyMode === 'normal' ? 1.5 : 1.1) - (en.bossLevel*0.05)); 
         addShake(8); playSnd('shoot');
       }
-
-      // 2. 특수 스킬 (다이너마이트 투척) - 보스가 강해지면 사용
       if(en.skillCd <= 0 && player.alive){
         let dynaCount = Math.min(6, 1 + Math.floor(en.bossLevel/2));
         for(let j=0; j<dynaCount; j++){
@@ -606,12 +651,10 @@ function updateEnemies(dt){
         en.skillCd = Math.max(2.0, 5.0 - (en.bossLevel*0.2)); 
         playSnd('jump'); addShake(5);
       }
-      
     } else if(en.type === 'bomber'){
       en.vx = dir * Math.abs(en.vx);
       if (dist < 40) {
-         en.fuse += dt;
-         en.vx = 0; // 근접하면 멈춰서 폭발 준비
+         en.fuse += dt; en.vx = 0; 
          if (en.fuse > 0.4) {
              explodeDynamite(en.x, en.y, 'enemy_bomber', en.dmgBase);
              en.hp = 0; en.alive = false;
@@ -641,7 +684,6 @@ function drawEnemies(){
     if(en.type === 'bomber') pal = BOMBER_PAL;
     const facing = en.vx>=0?1:-1;
     
-    // 자폭병 폭발 직전 깜빡임 연출
     if(en.type === 'bomber' && en.fuse > 0) {
       if(Math.floor(Date.now()/50)%2===0) ctx.globalAlpha = 0.5;
     }
@@ -664,7 +706,7 @@ function drawEnemies(){
 // PHYSICS & PLAYER UPDATE
 // ---------------------------------------------------------------
 function stepEntityVertical(entity, dt){
-  if(entity.climbing) return; 
+  if(entity.climbing || entity.isDashing) return; 
   entity.prevY = entity.y; entity.vy += GRAVITY*dt; entity.y += entity.vy*dt; entity.onGround = false;
   for(const p of platforms){
     if(entity.x > p.x+1 && entity.x < p.x+p.w-1){
@@ -678,53 +720,67 @@ function updatePlayer(dt){
   if(!player.alive) return;
   const speed = player.speed || 250; let moving = false;
   
-  let touchingRope = null;
-  for(const r of ropes){
-    if(Math.abs(player.x - r.x) < 14 && player.y > r.y - 5 && player.y - player.h < r.y + r.h){ touchingRope = r; break; }
-  }
-
-  if(touchingRope){
-    if((keys[actionKeys.jump] || keys[actionKeys.down]) && !player.climbing){ player.climbing = true; player.vx = 0; player.vy = 0; player.x = touchingRope.x; }
-  } else { player.climbing = false; }
-
-  // 클래스 1(도적)은 기본 2단 점프
-  const maxJ = (unlockedItems[5] || player.classId === 1) ? 2 : 1; 
-
-  if(player.climbing){
-    player.vy = 0; player.vx = 0; player.jumpCount = 0;
-    if(keys[actionKeys.jump]){ player.y -= 250*0.7*dt; player.walkPhase += dt*15; moving=true; }
-    if(keys[actionKeys.down]){ player.y += 250*0.7*dt; player.walkPhase += dt*15; moving=true; }
-    if(keys[actionKeys.left] || keys[actionKeys.right]){ player.climbing = false; }
-    
-    if(player.y > touchingRope.y+touchingRope.h){ player.y = touchingRope.y+touchingRope.h; player.climbing=false; }
-    if(player.y < touchingRope.y){ player.y = touchingRope.y; } // Fix
+  player.shootCd -= dt; player.invuln -= dt; player.dynaCd -= dt; player.dashCd -= dt;
+  
+  // DASH LOGIC
+  if (player.isDashing) {
+      player.dashTime -= dt;
+      player.vy = 0;
+      player.vx = player.facing * 900; // 대시 스피드
+      spawnParticles(player.x, player.y - 15, 2, ['#ffffff', '#00ffff'], 30, 0.2, 3); // 대시 궤적
+      if (player.dashTime <= 0) { player.isDashing = false; }
   } else {
-    if(keys[actionKeys.left]){ player.vx = -speed; player.facing=-1; moving=true; }
-    else if(keys[actionKeys.right]){ player.vx = speed; player.facing=1; moving=true; }
-    else player.vx = 0;
-
-    if(keys[actionKeys.jump] && !jumpPressedLast){
-      if(player.jumpCount < maxJ){
-        player.vy = -600; player.jumpCount++; player.onGround = false;
-        spawnParticles(player.x, player.y-1, 6, ['#d8c8a0','#b09468'],90,0.35,3);
-        playSnd('jump');
+      let touchingRope = null;
+      for(const r of ropes){
+        if(Math.abs(player.x - r.x) < 14 && player.y > r.y - 5 && player.y - player.h < r.y + r.h){ touchingRope = r; break; }
       }
-    }
+
+      if(touchingRope){
+        if((keys[actionKeys.jump] || keys[actionKeys.down]) && !player.climbing){ player.climbing = true; player.vx = 0; player.vy = 0; player.x = touchingRope.x; }
+      } else { player.climbing = false; }
+
+      const maxJ = (unlockedItems[5] || player.classId === 1) ? 2 : 1; 
+
+      if(player.climbing){
+        player.vy = 0; player.vx = 0; player.jumpCount = 0;
+        if(keys[actionKeys.jump]){ player.y -= 250*0.7*dt; player.walkPhase += dt*15; moving=true; }
+        if(keys[actionKeys.down]){ player.y += 250*0.7*dt; player.walkPhase += dt*15; moving=true; }
+        if(keys[actionKeys.left] || keys[actionKeys.right]){ player.climbing = false; }
+        if(player.y > touchingRope.y+touchingRope.h){ player.y = touchingRope.y+touchingRope.h; player.climbing=false; }
+        if(player.y < touchingRope.y){ player.y = touchingRope.y; } 
+      } else {
+        if(keys[actionKeys.left]){ player.vx = -speed; player.facing=-1; moving=true; }
+        else if(keys[actionKeys.right]){ player.vx = speed; player.facing=1; moving=true; }
+        else player.vx = 0;
+
+        if(keys[actionKeys.jump] && !jumpPressedLast){
+          if(player.jumpCount < maxJ){
+            player.vy = -600; player.jumpCount++; player.onGround = false;
+            spawnParticles(player.x, player.y-1, 6, ['#d8c8a0','#b09468'],90,0.35,3); playSnd('jump');
+          }
+        }
+        
+        // DASH INPUT TRIGGER
+        if(keys[actionKeys.dash] && player.dashCd <= 0){
+            player.isDashing = true; player.dashTime = 0.15; player.dashCd = 1.2;
+            playSnd('dash'); addShake(3);
+        }
+      }
   }
 
   player.x += player.vx*dt; player.x = clamp(player.x, 7, WORLD_W-7);
   stepEntityVertical(player, dt);
 
-  if(moving && player.onGround && !player.climbing) player.walkPhase += dt*12;
-  else if(!player.onGround && !player.climbing) player.walkPhase = 0;
-
-  player.shootCd -= dt; player.invuln -= dt; player.dynaCd -= dt;
+  if(!player.isDashing){
+      if(moving && player.onGround && !player.climbing) player.walkPhase += dt*12;
+      else if(!player.onGround && !player.climbing) player.walkPhase = 0;
+  }
 
   if(player.reloading){ player.reloadTimer -= dt; if(player.reloadTimer<=0){ player.reloading=false; player.ammo = player.maxAmmo; } }
   if(keys[actionKeys.reload] && !player.reloading && player.ammo<player.maxAmmo){ player.reloading = true; player.reloadTimer = player.reloadTime; }
 
   const gunX = player.x + player.facing*16; const gunY = player.y - 26;
-  if(keys[actionKeys.shoot] && player.shootCd<=0 && !player.reloading && !player.climbing){
+  if(keys[actionKeys.shoot] && player.shootCd<=0 && !player.reloading && !player.climbing && !player.isDashing){
     if(player.ammo>0){
       player.ammo--; player.shootCd = player.shootCdMax;
       let tier = shopStats.gunTier.level; let bSpeed = 800; 
@@ -737,7 +793,7 @@ function updatePlayer(dt){
     } else if(!player.reloading){ player.reloading = true; player.reloadTimer = player.reloadTime; }
   }
   
-  if(unlockedItems[4] && keys[actionKeys.item] && player.dynaCd <= 0){
+  if(unlockedItems[4] && keys[actionKeys.item] && player.dynaCd <= 0 && !player.isDashing){
     spawnDynamite(player.x, player.y - 20, player.facing * 400, -300, 'player');
     player.dynaCd = 5.0; playSnd('jump');
   }
@@ -748,8 +804,14 @@ function updatePlayer(dt){
 function drawPlayer(){
   if(!player.alive) return;
   if(player.invuln>0 && Math.floor(player.invuln*20)%2===0) return;
-  const aiming = keys[actionKeys.shoot] && player.shootCd > player.shootCdMax*0.6 && !player.reloading;
-  drawFigure(player.x, player.y, player.facing, player.walkPhase, SKINS_PAL[equippedSkin], aiming, !player.onGround && !player.climbing, 1, player.climbing);
+  
+  if (player.isDashing) {
+      ctx.globalAlpha = 0.6; // 대시 중 무적 연출 효과
+  }
+  
+  const aiming = keys[actionKeys.shoot] && player.shootCd > player.shootCdMax*0.6 && !player.reloading && !player.isDashing;
+  drawFigure(player.x, player.y, player.facing, player.walkPhase, SKINS_PAL[equippedSkin], aiming, (!player.onGround && !player.climbing) || player.isDashing, 1, player.climbing);
+  ctx.globalAlpha = 1.0;
 }
 
 function updateSpawning(dt){
@@ -757,20 +819,17 @@ function updateSpawning(dt){
      comboTimer -= dt;
      if(comboTimer <= 0) combo = 0;
   }
-
   if(enemies.length===0 && waveEnemiesToSpawn===0){ waveBreakTimer -= dt; if(waveBreakTimer<=0){ startWave(); waveBreakTimer = 3.0; } return; }
   if(waveEnemiesToSpawn>0){ 
     spawnTimer -= dt; 
     if(spawnTimer<=0){ 
       let r = Math.random();
       let eType = 'grunt';
-      // 악몽 모드면 자폭병(Bomber) 스폰 확률 증가
       let bomberChance = difficultyMode === 'nightmare' ? 0.25 : 0.15;
       if (r < bomberChance) eType = 'bomber';
       else if (r < 0.6) eType = 'gunslinger';
       
-      enemies.push(makeEnemy(eType)); 
-      waveEnemiesToSpawn--; 
+      enemies.push(makeEnemy(eType)); waveEnemiesToSpawn--; 
       let spawnDelay = rand(0.6, 1.2);
       if (difficultyMode === 'hard') spawnDelay /= 1.5;
       if (difficultyMode === 'nightmare') spawnDelay /= 2.5;
@@ -785,11 +844,11 @@ function updateSpawning(dt){
 let settingsCursor = 0; let waitingForKey = false;
 function drawSettings(){
   ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H);
-  ctx.textAlign='center'; ctx.fillStyle='#ffcf6a'; ctx.font='bold 40px monospace'; ctx.fillText('SETTINGS', W/2, 80);
-  ctx.fillStyle='#ffe27a'; ctx.font='14px monospace'; ctx.fillText('W/S 이동, SPACE 변경, B로 뒤로가기', W/2, 110);
+  ctx.textAlign='center'; ctx.fillStyle='#ffcf6a'; ctx.font='bold 40px monospace'; ctx.fillText('SETTINGS', W/2, 60);
+  ctx.fillStyle='#ffe27a'; ctx.font='14px monospace'; ctx.fillText('W/S 이동, SPACE 변경, B로 뒤로가기', W/2, 90);
   const actionList = Object.keys(actionKeys);
   for(let i=0; i<actionList.length; i++){
-    let act = actionList[i]; let yy = 150 + i*35;
+    let act = actionList[i]; let yy = 130 + i*32;
     ctx.fillStyle = (settingsCursor === i) ? '#ff6a2a' : '#d8c8a0'; ctx.font = (settingsCursor === i) ? 'bold 22px monospace' : '20px monospace';
     let text = actionNames[act] + " : " + actionKeys[act];
     if(waitingForKey && settingsCursor === i) text = actionNames[act] + " : [ PRESS ANY KEY ]";
@@ -883,7 +942,6 @@ function handleLobbyShopInput(){
 }
 
 let mapCursor = 0;
-
 function drawDiffSelect(){
   ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center'; ctx.fillStyle='#ff3a2a'; ctx.font='bold 40px monospace'; ctx.fillText('SELECT DIFFICULTY', W/2, 120);
@@ -946,6 +1004,7 @@ function drawShop(){
 
 function handleShopInput(){
   const bDown = !!keys[actionKeys.shop]; if(bDown && !bPressedLast){ gameState = 'playing'; } bPressedLast = bDown;
+  
   function tryBuy(stat){
     let cost = stat.costs ? stat.costs[stat.level] : stat.cost;
     if(stat.level < stat.max && gold >= cost){
@@ -956,11 +1015,19 @@ function handleShopInput(){
       syncStats(); playSnd('coin');
     }
   }
-  if(keys['Digit1'] && !spacePressedLast) tryBuy(shopStats.gunTier); if(keys['Digit2'] && !spacePressedLast) tryBuy(shopStats.dmg);
-  if(keys['Digit3'] && !spacePressedLast) tryBuy(shopStats.ammo); if(keys['Digit4'] && !spacePressedLast) tryBuy(shopStats.reload);
-  if(keys['Digit5'] && !spacePressedLast) tryBuy(shopStats.maxHp); if(keys['Digit6'] && !spacePressedLast) tryBuy(shopStats.armor);
-  if(keys['Digit7'] && !spacePressedLast) tryBuy(shopStats.speed);
-  if(keys['Digit8'] && !spacePressedLast) { if(player.hp < player.maxHp && gold >= shopStats.heal.cost){ gold -= shopStats.heal.cost; player.hp = Math.min(player.maxHp, player.hp + 50); playSnd('coin'); } }
+  
+  // Debounce logic: 처리 후 keys를 false로 두어 키를 뗐다 다시 눌러야 적용되게 만듦 (버그 픽스)
+  if(keys['Digit1']) { tryBuy(shopStats.gunTier); keys['Digit1'] = false; } 
+  if(keys['Digit2']) { tryBuy(shopStats.dmg); keys['Digit2'] = false; }
+  if(keys['Digit3']) { tryBuy(shopStats.ammo); keys['Digit3'] = false; } 
+  if(keys['Digit4']) { tryBuy(shopStats.reload); keys['Digit4'] = false; }
+  if(keys['Digit5']) { tryBuy(shopStats.maxHp); keys['Digit5'] = false; } 
+  if(keys['Digit6']) { tryBuy(shopStats.armor); keys['Digit6'] = false; }
+  if(keys['Digit7']) { tryBuy(shopStats.speed); keys['Digit7'] = false; }
+  if(keys['Digit8']) { 
+    if(player.hp < player.maxHp && gold >= shopStats.heal.cost){ gold -= shopStats.heal.cost; player.hp = Math.min(player.maxHp, player.hp + 50); playSnd('coin'); } 
+    keys['Digit8'] = false; 
+  }
 }
 
 function drawHUD(){
@@ -980,10 +1047,15 @@ function drawHUD(){
   }
   if(player.reloading){ const rProg = 1 - (player.reloadTimer/player.reloadTime); ctx.fillStyle='#1a1a1a'; ctx.fillRect(24,72,196,6); ctx.fillStyle='#6ad1ff'; ctx.fillRect(24,72,196*rProg,6); ctx.fillStyle='#fff'; ctx.font='10px monospace'; ctx.fillText('RELOADING...', 24, 68); }
 
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(16, 84, 220, 26); ctx.fillStyle='#fff'; ctx.font='bold 12px monospace';
+  
+  // 다이너마이트 쿨타임
   if(unlockedItems[4]){
-    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(16, 84, 130, 26); ctx.fillStyle='#fff'; ctx.font='bold 12px monospace';
     if(player.dynaCd <= 0) { ctx.fillStyle='#00ff00'; ctx.fillText('[Q] DYNAMITE', 24, 102); } else { ctx.fillStyle='#aaa'; ctx.fillText(`[Q] CD: ${player.dynaCd.toFixed(1)}s`, 24, 102); }
-  }
+  } else { ctx.fillStyle='#555'; ctx.fillText('[Q] LOCKED', 24, 102); }
+  
+  // 대시 쿨타임
+  if(player.dashCd <= 0) { ctx.fillStyle='#00ffff'; ctx.fillText('[SHIFT] DASH', 130, 102); } else { ctx.fillStyle='#aaa'; ctx.fillText(`[SHIFT] CD: ${player.dashCd.toFixed(1)}s`, 130, 102); }
 
   // Combo UI
   if(combo > 1){
@@ -1044,7 +1116,7 @@ function loop(now){
     if(spaceJustPressed){ gameState='playing'; resetPlayer(); score=0; waveNum=0; waveBreakTimer=1.2; applyStage(mapCursor); }
   } else if(gameState==='shop'){ handleShopInput();
   } else if(gameState==='playing'){
-    updatePlayer(dt); updateEnemies(dt); updateBullets(dt); updateDynamites(dt); updateItems(dt); updateSpawning(dt);
+    updatePlayer(dt); updateEnemies(dt); updateBullets(dt); updateDynamites(dt); updateItems(dt); updateSpawning(dt); updateFloatingTexts(dt);
     if(banner.timer>0) banner.timer -= dt; camera.x = clamp(player.x - W/2, 0, WORLD_W - W);
   }
   
@@ -1062,7 +1134,7 @@ function render(){
   if(shake>0) ctx.translate(rand(-shake,shake), rand(-shake,shake));
   if(gameState === 'playing' || gameState === 'shop' || gameState === 'gameover'){
     ctx.translate(-Math.floor(camera.x), 0); ctx.drawImage(bgCanvas,0,0);
-    drawPlatformsAndRopes(); drawProps(); drawItems(); drawDynamites(); drawEnemies(); drawPlayer(); drawBullets(); drawParticles();
+    drawPlatformsAndRopes(); drawProps(); drawItems(); drawDynamites(); drawEnemies(); drawPlayer(); drawBullets(); drawParticles(); drawFloatingTexts();
   }
   ctx.restore();
 
