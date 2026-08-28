@@ -2,11 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>PIXEL FORCE - Hardcore Endless & Classes</title>
+<title>PIXEL FORCE - Practice Mode</title>
 <style>
   html,body{margin:0;padding:0;background:#0a0a0a;overflow:hidden;height:100%;
     display:flex;align-items:center;justify-content:center;font-family:'Courier New',monospace; color:#fff;}
-  #wrap{position:relative;box-shadow:0 0 40px rgba(255,100,50,0.15);}
+  #wrap{position:relative;box-shadow:0 0 40px rgba(255,50,0,0.25);}
   canvas{display:block;background:#1a1004;image-rendering:pixelated;image-rendering:crisp-edges;}
   #hint{position:absolute;bottom:-25px;left:0;right:0;text-align:center;color:#caa06a;
     font-size:13px;letter-spacing:1px;text-shadow:1px 1px 0 #000;pointer-events:none;}
@@ -27,7 +27,7 @@ const W = cv.width, H = cv.height;
 const WORLD_W = 2400; 
 
 // ---------------------------------------------------------------
-// AUDIO CONTEXT (RETRO SOUNDS)
+// AUDIO CONTEXT
 // ---------------------------------------------------------------
 let audioCtx;
 function initAudio(){
@@ -86,6 +86,7 @@ window.addEventListener('keyup', e=>{ keys[e.code] = false; });
 
 let camera = { x: 0, y: 0 };
 let spacePressedLast = false; let bPressedLast = false; let sPressedLast = false; let lPressedLast = false; let qPressedLast = false;
+let pPressedLast = false; let escPressedLast = false;
 let keyLeftLast = false; let keyRightLast = false; let keyUpLast = false; let keyDownLast = false; let jumpPressedLast = false;
 
 // ---------------------------------------------------------------
@@ -93,31 +94,46 @@ let keyLeftLast = false; let keyRightLast = false; let keyUpLast = false; let ke
 // ---------------------------------------------------------------
 let gameState = 'title'; 
 let difficultyMode = 'normal'; 
+let isPractice = false;
+
 function rand(a,b){ return a + Math.random()*(b-a); }
 function rint(a,b){ return Math.floor(rand(a,b+1)); }
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 function aabb(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
 
 let globalCoins = parseInt(localStorage.getItem('pf_coins')||'0');
-let unlockedItems = JSON.parse(localStorage.getItem('pf_unlocked')||'[true,false,false,false,false,false,true,false,false]');
-let equippedGun = parseInt(localStorage.getItem('pf_equip')||'0');
-let equippedSkin = parseInt(localStorage.getItem('pf_skin')||'0');
+let savedUnlocked = JSON.parse(localStorage.getItem('pf_unlocked_v2')||'null');
+let unlockedItems = [true,false,false,false,false,false,false,false,true,false,false,false];
+
+if(savedUnlocked){ 
+    for(let i=0;i<Math.min(savedUnlocked.length,12);i++) unlockedItems[i] = savedUnlocked[i]; 
+} else {
+    let oldUnlocked = JSON.parse(localStorage.getItem('pf_unlocked')||'null');
+    if (oldUnlocked) {
+        unlockedItems[0] = oldUnlocked[0] || true; unlockedItems[1] = oldUnlocked[1] || false;
+        unlockedItems[2] = oldUnlocked[2] || false; unlockedItems[3] = oldUnlocked[3] || false;
+        unlockedItems[6] = oldUnlocked[4] || false; unlockedItems[7] = oldUnlocked[5] || false;
+        unlockedItems[8] = oldUnlocked[6] || true; unlockedItems[9] = oldUnlocked[7] || false;
+        unlockedItems[10] = oldUnlocked[8] || false; unlockedItems[11] = oldUnlocked[9] || false;
+    }
+}
+
+let equippedGun = parseInt(localStorage.getItem('pf_equip_v2')||'-1');
+let equippedSkin = parseInt(localStorage.getItem('pf_skin_v2')||'-1');
+if(equippedGun === -1) equippedGun = parseInt(localStorage.getItem('pf_equip')||'0');
+if(equippedSkin === -1) equippedSkin = parseInt(localStorage.getItem('pf_skin')||'0');
 let earnedCoinsThisRun = 0;
 
-let combo = 0; 
-let comboTimer = 0; 
+let combo = 0; let comboTimer = 0; 
+let nightmareTimer = 30.0;
 
 function saveGlobal() {
   localStorage.setItem('pf_coins', globalCoins);
-  localStorage.setItem('pf_unlocked', JSON.stringify(unlockedItems));
-  localStorage.setItem('pf_equip', equippedGun);
-  localStorage.setItem('pf_skin', equippedSkin);
+  localStorage.setItem('pf_unlocked_v2', JSON.stringify(unlockedItems));
+  localStorage.setItem('pf_equip_v2', equippedGun);
+  localStorage.setItem('pf_skin_v2', equippedSkin);
 }
-
-function addCombo() {
-  combo++;
-  comboTimer = 3.5; 
-}
+function addCombo() { combo++; comboTimer = 3.5; }
 
 // ---------------------------------------------------------------
 // FLOATING TEXT & PARTICLES
@@ -128,23 +144,16 @@ function spawnText(x, y, text, color, scale = 1.0, life = 1.0) {
 }
 function updateFloatingTexts(dt) {
     for (let i = floatingTexts.length - 1; i >= 0; i--) {
-        let ft = floatingTexts[i];
-        ft.life -= dt;
-        ft.y += ft.vy * dt;
+        let ft = floatingTexts[i]; ft.life -= dt; ft.y += ft.vy * dt;
         if (ft.life <= 0) floatingTexts.splice(i, 1);
     }
 }
 function drawFloatingTexts() {
     for (const ft of floatingTexts) {
-        ctx.save();
-        ctx.globalAlpha = clamp(ft.life / (ft.maxLife*0.5), 0, 1); // 서서히 사라짐
-        ctx.fillStyle = ft.color;
-        ctx.font = `bold ${Math.floor(14 * ft.scale)}px monospace`;
-        ctx.textAlign = 'center';
-        ctx.lineWidth = 3; ctx.strokeStyle = '#000';
-        ctx.strokeText(ft.text, ft.x, ft.y);
-        ctx.fillText(ft.text, ft.x, ft.y);
-        ctx.restore();
+        ctx.save(); ctx.globalAlpha = clamp(ft.life / (ft.maxLife*0.5), 0, 1);
+        ctx.fillStyle = ft.color; ctx.font = `bold ${Math.floor(14 * ft.scale)}px monospace`;
+        ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = '#000';
+        ctx.strokeText(ft.text, ft.x, ft.y); ctx.fillText(ft.text, ft.x, ft.y); ctx.restore();
     }
 }
 
@@ -179,33 +188,96 @@ const STAGES = [
   { name:'GHOST TOWN', platformStyleKey:'dusty', platforms:[{x:0, y:GROUND_Y, w:WORLD_W, h:70},{x:60, y:GROUND_Y-140, w:160, h:20}, {x:280, y:GROUND_Y-280, w:200, h:20},{x:500, y:GROUND_Y-100, w:150, h:20}, {x:750, y:GROUND_Y-240, w:240, h:20},{x:1150, y:GROUND_Y-180, w:160, h:20}, {x:1400, y:GROUND_Y-300, w:220, h:20},{x:1750, y:GROUND_Y-160, w:180, h:20}], ropes:[{x:120, y:GROUND_Y-140, h:140}, {x:360, y:GROUND_Y-280, h:280},{x:850, y:GROUND_Y-240, h:240}, {x:1480, y:GROUND_Y-300, h:300}], drawBG(b){ const grad = b.createLinearGradient(0,0,0,H); grad.addColorStop(0,'#3a2350'); grad.addColorStop(0.5,'#8a4a5c'); grad.addColorStop(1,'#7a4030'); b.fillStyle = grad; b.fillRect(0,0,WORLD_W,H); b.fillStyle = '#ffcf8a'; b.beginPath(); b.arc(1800,140,46,0,Math.PI*2); b.fill(); } },
   { name:'BOX CANYON NIGHT', platformStyleKey:'stone', platforms:[{x:0, y:GROUND_Y, w:WORLD_W, h:70},{x:150, y:GROUND_Y-180, w:180, h:20}, {x:400, y:GROUND_Y-340, w:220, h:20},{x:750, y:GROUND_Y-140, w:200, h:20}, {x:1000, y:GROUND_Y-280, w:180, h:20},{x:1350, y:GROUND_Y-180, w:200, h:20}, {x:1650, y:GROUND_Y-320, w:240, h:20},{x:2050, y:GROUND_Y-200, w:160, h:20}], ropes:[{x:220, y:GROUND_Y-180, h:180}, {x:480, y:GROUND_Y-340, h:340},{x:1080, y:GROUND_Y-280, h:280}, {x:1750, y:GROUND_Y-320, h:320}], drawBG(b){ const grad = b.createLinearGradient(0,0,0,H); grad.addColorStop(0,'#050818'); grad.addColorStop(0.6,'#181034'); grad.addColorStop(1,'#241018'); b.fillStyle = grad; b.fillRect(0,0,WORLD_W,H); b.fillStyle = '#fff8e0'; for(let i=0;i<200;i++) b.fillRect(rand(0,WORLD_W),rand(0,H*0.6), rand(1,2), rand(1,2)); } }
 ];
+const GRAVEYARD_STAGE = {
+  name:'NIGHTMARE GRAVEYARD', platformStyleKey:'tomb', 
+  platforms:[{x:0, y:GROUND_Y, w:WORLD_W, h:70},{x:120, y:GROUND_Y-130, w:180, h:20}, {x:320, y:GROUND_Y-270, w:180, h:20},{x:600, y:GROUND_Y-150, w:150, h:20}, {x:850, y:GROUND_Y-300, w:220, h:20},{x:1200, y:GROUND_Y-180, w:200, h:20}, {x:1500, y:GROUND_Y-280, w:200, h:20},{x:1850, y:GROUND_Y-160, w:180, h:20}], 
+  ropes:[{x:250, y:GROUND_Y-270, h:270}, {x:700, y:GROUND_Y-300, h:300},{x:1350, y:GROUND_Y-280, h:280}, {x:1700, y:GROUND_Y-160, h:160}], 
+  drawBG(b){ 
+    const grad = b.createLinearGradient(0,0,0,H); 
+    grad.addColorStop(0,'#040814'); grad.addColorStop(0.6,'#0a1828'); grad.addColorStop(1,'#142424'); 
+    b.fillStyle = grad; b.fillRect(0,0,WORLD_W,H); 
+    b.fillStyle = '#3a4a4a'; b.beginPath(); b.arc(200,120,75,0,Math.PI*2); b.fill(); 
+    for(let i=0; i<45; i++) { 
+      b.fillStyle='#0f1616';
+      b.fillRect(rand(0,WORLD_W), GROUND_Y-rand(25,50), rand(18,28), 50);
+    }
+  } 
+};
+const HELL_STAGE = {
+  name:'INFERNO ABYSS (HELL)', platformStyleKey:'hell_stone', 
+  platforms:[{x:0, y:GROUND_Y, w:WORLD_W, h:70},{x:150, y:GROUND_Y-140, w:180, h:20}, {x:400, y:GROUND_Y-300, w:220, h:20},{x:750, y:GROUND_Y-160, w:200, h:20}, {x:1050, y:GROUND_Y-320, w:240, h:20},{x:1450, y:GROUND_Y-200, w:180, h:20}, {x:1750, y:GROUND_Y-340, w:200, h:20},{x:2100, y:GROUND_Y-220, w:160, h:20}], 
+  ropes:[{x:240, y:GROUND_Y-140, h:140}, {x:500, y:GROUND_Y-300, h:300},{x:1150, y:GROUND_Y-320, h:320}, {x:1850, y:GROUND_Y-340, h:340}], 
+  drawBG(b){ 
+    const grad = b.createLinearGradient(0,0,0,H); 
+    grad.addColorStop(0,'#110000'); grad.addColorStop(0.5,'#3a0505'); grad.addColorStop(1,'#8a1100'); 
+    b.fillStyle = grad; b.fillRect(0,0,WORLD_W,H); 
+    b.fillStyle = '#ff3300'; b.beginPath(); b.arc(WORLD_W-300, 150, 90, 0, Math.PI*2); b.fill();
+    b.fillStyle = '#ffff00'; b.beginPath(); b.arc(WORLD_W-300, 150, 75, 0, Math.PI*2); b.fill();
+    for(let i=0; i<80; i++) { 
+      b.fillStyle= (i%2===0)?'#220000':'#440000';
+      b.fillRect(rand(0,WORLD_W), GROUND_Y-rand(20,150), rand(30,60), 150);
+    }
+  } 
+};
+const PRACTICE_STAGE = {
+  name: 'TRAINING ROOM', platformStyleKey: 'wood',
+  platforms: [{x:0, y:GROUND_Y, w:WORLD_W, h:70}],
+  ropes: [],
+  drawBG(b) {
+    b.fillStyle = '#1e1e1e'; b.fillRect(0,0,WORLD_W,H);
+    b.fillStyle = '#2a2a2a'; for(let i=0; i<WORLD_W; i+=100) b.fillRect(i,0,2,H);
+  }
+};
+
 let platforms = []; let ropes = []; let currentStageIndex = 0; let banner = {text:'', timer:0};
 const bgCanvas = document.createElement('canvas'); bgCanvas.width = WORLD_W; bgCanvas.height = H;
 
 function applyStage(idx){
-  currentStageIndex = idx; const st = STAGES[idx];
+  currentStageIndex = idx; 
+  let st;
+  if (idx === -1) st = PRACTICE_STAGE;
+  else st = difficultyMode === 'hell' ? HELL_STAGE : (difficultyMode === 'nightmare' ? GRAVEYARD_STAGE : STAGES[idx]);
+  
   const style = PLATFORM_STYLES[st.platformStyleKey] || PLATFORM_STYLES.wood;
   platforms = st.platforms.map(p=>({x:p.x,y:p.y,w:p.w,h:p.h,style}));
   ropes = st.ropes.map(r=>({x:r.x, y:r.y, h:r.h}));
   st.drawBG(bgCanvas.getContext('2d'));
   props = [];
-  for(let i=0; i<18; i++){
-    let p = platforms[rint(1, platforms.length-1)]; 
-    props.push({ x:rand(p.x+10, p.x+p.w-30), y:p.y-24, w:24, h:24, hp:40, maxHp:40, dead:false });
+  
+  if (idx !== -1) {
+      for(let i=0; i<18; i++){
+        let p = platforms[rint(1, platforms.length-1)]; 
+        props.push({ x:rand(p.x+10, p.x+p.w-30), y:p.y-24, w:24, h:24, hp:40, maxHp:40, dead:false });
+      }
+      banner = {text:'STAGE '+(idx+1)+' : '+st.name, timer:2.6};
+  } else {
+      banner = {text:'PRACTICE ROOM', timer:2.6};
   }
-  banner = {text:'STAGE '+(idx+1)+' : '+st.name, timer:2.6};
+  
   enemies = []; bullets = []; dynamites = []; particles = []; items = []; floatingTexts = []; waveEnemiesToSpawn = 0;
-  if(player){ player.x = 200; player.y = GROUND_Y-1; player.vx=0; player.vy=0; player.invuln = 1.0; player.climbing=false; player.jumpCount=0; }
+  
+  if (idx === -1) {
+      for(let i=1; i<=6; i++) {
+          enemies.push({ type: 'dummy', x: 200 + i*150, y: GROUND_Y-1, vx: 0, vy: 0, hp: 999999, maxHp: 999999, alive: true, walkPhase: 0, onGround: true, scale: 1.5, dmgBase: 0 });
+      }
+  }
+
+  if(player){ player.x = 200; player.y = GROUND_Y-1; player.vx=0; player.vy=0; player.invuln = 1.0; player.climbing=false; player.jumpCount=0; player.frenzyTimer = 0; }
 }
 
 const PLATFORM_STYLES = {
   wood:  {top:'#8a5a34', body:'#6b4326', line:'#4a2e1a', rope:'#cda365'},
   dusty: {top:'#a67a52', body:'#7a5636', line:'#5c3d22', rope:'#988'},
-  stone: {top:'#6a6660', body:'#3f3c36', line:'#232019', rope:'#3e6b3a'}
+  stone: {top:'#6a6660', body:'#3f3c36', line:'#232019', rope:'#3e6b3a'},
+  tomb:  {top:'#304040', body:'#202828', line:'#101818', rope:'#506060'},
+  hell_stone: {top:'#ff3300', body:'#330000', line:'#1a0000', rope:'#ff8800'}
 };
 
 function drawPlatformsAndRopes(){
-  const rColor = STAGES[currentStageIndex].platformStyleKey === 'stone' ? '#4a7c4a' : '#cda365';
+  let rColor = '#cda365';
+  if(STAGES[currentStageIndex]?.platformStyleKey === 'stone') rColor = '#4a7c4a';
+  if(difficultyMode === 'nightmare') rColor = '#506060';
+  if(difficultyMode === 'hell') rColor = '#ff8800';
   ctx.strokeStyle = rColor; ctx.lineWidth = 4;
   for(const r of ropes){
     ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(r.x, r.y+r.h); ctx.stroke();
@@ -232,10 +304,11 @@ function damageProp(prop, dmg){
   if(prop.hp <= 0 && !prop.dead){
     prop.dead = true; addShake(4); playSnd('exp');
     spawnParticles(prop.x+12, prop.y+12, 20, ['#8a5a34','#6b4326','#4a2e1a'], 250, 0.6, 5);
-    let coinCount = rint(1,3); for(let i=0; i<coinCount; i++) spawnCoin(prop.x+12, prop.y);
+    if (!isPractice) {
+        let coinCount = rint(1,3); for(let i=0; i<coinCount; i++) spawnCoin(prop.x+12, prop.y);
+    }
   }
 }
-
 function spawnCoin(x,y, amount=1){ 
   for(let i=0; i<amount; i++) items.push({ type:'gold', x:x, y:y, vx:rand(-150,150), vy:rand(-300,-150), w:10, h:10, life:10, onGround:false }); 
 }
@@ -250,7 +323,6 @@ function updateItems(dt){
         it.y = p.y - it.h; it.vy *= -0.5; it.vx *= 0.8; it.onGround=true;
       }
     }
-    
     if(player.alive && aabb(it, {x:player.x-10, y:player.y-38, w:20, h:38})){
       if(it.type === 'gold'){
         let goldGain = 10;
@@ -262,6 +334,12 @@ function updateItems(dt){
         player.hp = Math.min(player.maxHp, player.hp + 30);
         spawnParticles(it.x+5, it.y+5, 12, ['#ff0000','#ffffff'], 120, 0.5, 4); playSnd('coin');
         spawnText(player.x, player.y - 40, "+30 HP", "#0f0", 1.2, 1);
+      }
+      else if(it.type === 'cursed_gem'){
+        player.frenzyTimer = 5.0; 
+        spawnParticles(it.x+6, it.y+6, 25, ['#aa00ff','#ff00ff','#ffffff'], 250, 0.7, 4); playSnd('exp');
+        spawnText(player.x, player.y - 40, "CURSED FRENZY!", "#ff00ff", 1.2, 1.5);
+        addShake(8);
       }
       items.splice(i,1);
     }
@@ -275,7 +353,6 @@ function drawProps(){
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x+p.w, p.y+p.h); ctx.moveTo(p.x+p.w, p.y); ctx.lineTo(p.x, p.y+p.h); ctx.strokeStyle='#4a2e1a'; ctx.lineWidth=2; ctx.stroke();
   }
 }
-
 function drawItems(){
   for(const it of items){
     if(it.life < 2 && Math.floor(it.life*10)%2===0) continue;
@@ -283,49 +360,86 @@ function drawItems(){
       ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(it.x+5, it.y+5, 5, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = '#ffaa00'; ctx.beginPath(); ctx.arc(it.x+5, it.y+5, 3, 0, Math.PI*2); ctx.fill();
     }
-    else if(it.type === 'heal'){ // 힐 아이템 (십자가 박스 모양)
+    else if(it.type === 'heal'){ 
       ctx.fillStyle = '#fff'; ctx.fillRect(it.x, it.y, 12, 12);
       ctx.fillStyle = '#ff0000'; ctx.fillRect(it.x+4, it.y+2, 4, 8); ctx.fillRect(it.x+2, it.y+4, 8, 4);
+    }
+    else if(it.type === 'cursed_gem'){
+      ctx.fillStyle = '#5500aa'; 
+      ctx.beginPath(); ctx.arc(it.x+6, it.y+6, 6, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#ff00ff'; 
+      ctx.beginPath(); ctx.arc(it.x+6, it.y+6, 3, 0, Math.PI*2); ctx.fill();
+      if(Math.floor(Date.now()/150)%2===0) {
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.strokeRect(it.x-2, it.y-2, 16, 16);
+      }
     }
   }
 }
 
 // ---------------------------------------------------------------
-// DYNAMITE & EXPLOSIONS
+// DYNAMITE & METEORS & EXPLOSIONS
 // ---------------------------------------------------------------
-function spawnDynamite(x,y,vx,vy, from='player', customDmg=0){ dynamites.push({x,y,vx,vy,life:1.5, from, customDmg}); }
+function spawnDynamite(x,y,vx,vy, from='player', customDmg=0, type='dynamite'){ 
+    dynamites.push({x,y,vx,vy, life: type==='meteor'?5.0:1.5, from, customDmg, type}); 
+}
+
 function updateDynamites(dt){
   for(let i=dynamites.length-1; i>=0; i--){
-    let d = dynamites[i]; d.life -= dt; d.vy += GRAVITY*dt; d.x += d.vx*dt; d.y += d.vy*dt;
-    if(d.y > GROUND_Y-5) { d.y=GROUND_Y-5; d.vy*=-0.5; d.vx*=0.7; }
-    for(const p of platforms){
-      if(d.vy>0 && d.x>p.x && d.x<p.x+p.w && d.y>=p.y && d.y-d.vy*dt<=p.y+2){ d.y = p.y-5; d.vy*=-0.5; d.vx*=0.7; }
+    let d = dynamites[i]; d.life -= dt; 
+    
+    if(d.type === 'meteor'){
+        d.vy += 1500 * 0.2 * dt;
+        d.x += d.vx*dt; d.y += d.vy*dt;
+        spawnParticles(d.x, d.y, 1, ['#ff3a00','#ffaa00'], 60, 0.3, 3);
+        
+        if (d.y > GROUND_Y) { 
+            explodeDynamite(d.x, GROUND_Y, d.from, d.customDmg); 
+            dynamites.splice(i,1); continue;
+        }
+        for(const p of platforms){
+          if(d.vy>0 && d.x>p.x && d.x<p.x+p.w && d.y>=p.y && d.y-d.vy*dt<=p.y+4){ 
+             explodeDynamite(d.x, p.y, d.from, d.customDmg);
+             d.life = -1; break;
+          }
+        }
+        if(d.life<=0){ dynamites.splice(i,1); }
+    } else {
+        d.vy += GRAVITY*dt; d.x += d.vx*dt; d.y += d.vy*dt;
+        if(d.y > GROUND_Y-5) { d.y=GROUND_Y-5; d.vy*=-0.5; d.vx*=0.7; }
+        for(const p of platforms){
+          if(d.vy>0 && d.x>p.x && d.x<p.x+p.w && d.y>=p.y && d.y-d.vy*dt<=p.y+2){ d.y = p.y-5; d.vy*=-0.5; d.vx*=0.7; }
+        }
+        if(d.life<=0){ explodeDynamite(d.x, d.y, d.from, d.customDmg); dynamites.splice(i,1); }
     }
-    if(d.life<=0){ explodeDynamite(d.x, d.y, d.from, d.customDmg); dynamites.splice(i,1); }
   }
 }
 function drawDynamites(){
   for(const d of dynamites){
-    ctx.fillStyle='#f00'; ctx.fillRect(d.x-3, d.y-8, 6, 12);
-    ctx.fillStyle='#fff'; ctx.fillRect(d.x-1, d.y-10, 2, 2);
-    if(Math.floor(d.life*15)%2===0){ ctx.fillStyle='#ff0'; ctx.fillRect(d.x-2, d.y-12, 4, 4); }
+    if (d.type === 'meteor') {
+        ctx.fillStyle='#ff5500'; ctx.beginPath(); ctx.arc(d.x, d.y, 8, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle='#ffeeaa'; ctx.beginPath(); ctx.arc(d.x, d.y, 4, 0, Math.PI*2); ctx.fill();
+    } else {
+        ctx.fillStyle='#f00'; ctx.fillRect(d.x-3, d.y-8, 6, 12);
+        ctx.fillStyle='#fff'; ctx.fillRect(d.x-1, d.y-10, 2, 2);
+        if(Math.floor(d.life*15)%2===0){ ctx.fillStyle='#ff0'; ctx.fillRect(d.x-2, d.y-12, 4, 4); }
+    }
   }
 }
 function explodeDynamite(x,y, from, customDmg=0){
   playSnd('exp'); addShake(15);
   spawnParticles(x,y,60,['#ff0000','#ffaa00','#ffff00','#ffffff'], 450, 1.0, 5);
   
-  if(from === 'player' || from === 'enemy_bomber'){
-    let dmg = from === 'player' ? (250 + shopStats.dmg.val) : (customDmg || 100);
+  if(from === 'player' || from === 'player_plasma' || from === 'enemy_bomber'){
+    let dmg = (from === 'player' || from === 'player_plasma') ? (250 + shopStats.dmg.val) : (customDmg || 100);
     for(const en of enemies){
       if(!en.alive) continue;
       if(Math.hypot(en.x-x, en.y-y) < 140) {
-        damageEnemy(en, dmg, en.x, en.y, en.x>x?250:-250, from);
+        damageEnemy(en, dmg, en.x, en.y, en.x>x?250:-250, 'player');
       }
     }
   } 
   
-  if(from !== 'player'){
+  if(from !== 'player' && from !== 'player_plasma'){
     if(player.alive && Math.hypot(player.x-x, player.y-19-y) < 120){
       let dmgBase = customDmg || (40 * (1 + waveNum*0.1)); 
       damagePlayer(dmgBase); 
@@ -388,12 +502,24 @@ function drawFigure(x, y, facing, walkPhase, palette, aiming, airborne, scaleFac
 const SKIN_DEFAULT = { H:'#3a2415', h:'#6b4226', b:'#241505', f:'#e3ac7a', e:'#1a1008', F:'#4a2e18', n:'#a83232', s:'#5b7a4a', v:'#5a3a22', a:'#5b7a4a', g:'#3b3b3f', k:'#2b1c10', u:'#c9a227', p:'#33415c', o:'#241a14' };
 const SKIN_BANDIT = { H:'#1a1a1a', h:'#2a2a2a', b:'#000', f:'#d9a066', e:'#000', F:'#5c1e1e', n:'#8a2e2e', s:'#2a2a2a', v:'#1a1a1a', a:'#2a2a2a', g:'#1a1a1a', k:'#111', u:'#555', p:'#1a1a1a', o:'#050505' };
 const SKIN_CYBORG = { H:'#3a4a5a', h:'#4a5a6a', b:'#1a2a3a', f:'#d9a066', e:'#00ffff', F:'#5a6a7a', n:'#6a7a8a', s:'#2a3a4a', v:'#1a2a3a', a:'#2a3a4a', g:'#3a4a5a', k:'#1a2a3a', u:'#00ffff', p:'#2a3a4a', o:'#1a2a3a' };
-const SKINS_PAL = [SKIN_DEFAULT, SKIN_BANDIT, SKIN_CYBORG];
+const SKIN_STORM = { H:'#1a3a5a', h:'#2a4a6a', b:'#001a3a', f:'#d9a066', e:'#00ffff', F:'#3a5a7a', n:'#4a6a8a', s:'#1a2a4a', v:'#001a3a', a:'#1a2a4a', g:'#2a4a6a', k:'#001a3a', u:'#00ffff', p:'#1a2a4a', o:'#001a3a' };
+const SKINS_PAL = [SKIN_DEFAULT, SKIN_BANDIT, SKIN_CYBORG, SKIN_STORM];
 
 const GRUNT_PAL = { H:'#241a14', h:'#3a2a1c', b:'#120c08', f:'#c99a6e', e:'#0d0805', F:'#1f1f22', n:'#1f1f22', s:'#4a4a4a', v:'#33241a', a:'#4a4a4a', g:'#2a2a2a', k:'#1a1108', u:'#7a6a30', p:'#2b2b30', o:'#191919' };
 const BOMBER_PAL = { H:'#330a0a', h:'#4a1a1a', b:'#1a0505', f:'#c99a6e', e:'#0d0805', F:'#ff3333', n:'#ff6666', s:'#a83232', v:'#5a1a1a', a:'#a83232', g:'#ffaaaa', k:'#3a1111', u:'#ff9900', p:'#401a1a', o:'#240a0a' };
 const GUNSLINGER_PAL = { H:'#241014', h:'#3a1a20', b:'#120608', f:'#c99a6e', e:'#0d0805', F:'#8a1f1f', n:'#8a1f1f', s:'#6b2a2a', v:'#301818', a:'#6b2a2a', g:'#2a2a2a', k:'#200a0a', u:'#a8862a', p:'#402a3a', o:'#191919' };
 const BOSS_PAL = { H:'#050505', h:'#2a0a0a', b:'#000000', f:'#9a3e3e', e:'#ff0000', F:'#550000', n:'#ff1a1a', s:'#222222', v:'#111111', a:'#333333', g:'#ff0000', k:'#111111', u:'#ff3333', p:'#1a1a1a', o:'#050505' };
+const CULTIST_PAL = { H:'#1a0a2a', h:'#2a1a3a', b:'#0a001a', f:'#c99a6e', e:'#00ffcc', F:'#3a1a5a', n:'#5a2a7a', s:'#1a0a2a', v:'#1a0a2a', a:'#1a0a2a', g:'#2a1a3a', k:'#111', u:'#00ffcc', p:'#2a1a3a', o:'#1a0a2a' };
+const GHOST_PAL = { H:'#ffffff', h:'#e0ffff', b:'#ffffff', f:'#ffffff', e:'#ff0000', F:'#e0ffff', n:'#e0ffff', s:'#ffffff', v:'#ffffff', a:'#ffffff', g:'#ffffff', k:'#ffffff', u:'#ff0000', p:'#ffffff', o:'#ffffff' }; 
+const NECRO_PAL = { H:'#111', h:'#222', b:'#000', f:'#dddddd', e:'#ff00ff', F:'#550055', n:'#880088', s:'#111', v:'#000', a:'#111', g:'#ff00ff', k:'#000', u:'#880088', p:'#222', o:'#111' };
+const TANK_PAL = { H:'#4a4a4a', h:'#2b2b2b', b:'#1a1a1a', f:'#c99a6e', e:'#000', F:'#2b2b2b', n:'#1a1a1a', s:'#4a4a4a', v:'#1a1a1a', a:'#4a4a4a', g:'#1a1a1a', k:'#111', u:'#000', p:'#2b2b2b', o:'#111' };
+const ASSASSIN_PAL = { H:'#1a0a2a', h:'#1a1a1a', b:'#0a0a0a', f:'#c99a6e', e:'#ff0000', F:'#1a0a2a', n:'#0a0a0a', s:'#1a0a2a', v:'#0a0a0a', a:'#1a0a2a', g:'#0a0a0a', k:'#0a0a0a', u:'#ff0000', p:'#1a0a2a', o:'#0a0a0a' };
+const SNIPER_PAL = { H:'#1a3a1a', h:'#2a4a2a', b:'#0a1a0a', f:'#c99a6e', e:'#00ff00', F:'#2a4a2a', n:'#1a3a1a', s:'#3a5a3a', v:'#0a1a0a', a:'#3a5a3a', g:'#0a1a0a', k:'#000', u:'#00ff00', p:'#2a4a2a', o:'#0a1a0a' };
+const INFERNO_PAL = { H:'#4a0a0a', h:'#5a1a1a', b:'#2a0000', f:'#ff4400', e:'#ffff00', F:'#cc2200', n:'#ff0000', s:'#2a0000', v:'#1a0000', a:'#2a0000', g:'#ff8800', k:'#111', u:'#ffff00', p:'#3a0a0a', o:'#1a0000' };
+const VOID_PAL = { H:'#0a001a', h:'#1a002a', b:'#05000a', f:'#8844ff', e:'#ffffff', F:'#4400aa', n:'#6600ff', s:'#0a001a', v:'#05000a', a:'#0a001a', g:'#aa00ff', k:'#000', u:'#ffffff', p:'#1a002a', o:'#05000a' };
+const DEMON_PAL = { H:'#000', h:'#111', b:'#000', f:'#330000', e:'#ff0000', F:'#aa0000', n:'#ff0000', s:'#000', v:'#000', a:'#000', g:'#ff0000', k:'#000', u:'#ff0000', p:'#111', o:'#000' };
+const DRAGON_PAL = { H:'#2a0505', h:'#4a0a0a', b:'#1a0000', f:'#ff4400', e:'#ffff00', F:'#880000', n:'#ffaa00', s:'#1a0505', v:'#000', a:'#1a0505', g:'#ff4400', k:'#000', u:'#ff0000', p:'#4a0a0a', o:'#1a0000' };
+const DUMMY_PAL = { H:'#8a5a34', h:'#6b4326', b:'#4a2e1a', f:'#8a5a34', e:'#000', F:'#8a5a34', n:'#8a5a34', s:'#6b4326', v:'#4a2e1a', a:'#6b4326', g:'#4a2e1a', k:'#2b1c10', u:'#000', p:'#6b4326', o:'#4a2e1a' };
 
 // ---------------------------------------------------------------
 // PLAYER & IN-GAME SHOP
@@ -401,7 +527,7 @@ const BOSS_PAL = { H:'#050505', h:'#2a0a0a', b:'#000000', f:'#9a3e3e', e:'#ff000
 const GRAVITY = 1500; let gold = 0;
 
 const shopStats = {
-  gunTier: { level: 0, max: 3, costs: [200, 500, 900] },
+  gunTier: { level: 0, max: 5, costs: [200, 500, 900, 1500, 2500] },
   dmg:     { level: 0, max: 5, cost: 50, val: 35, inc: 10 },
   ammo:    { level: 0, max: 5, cost: 40, val: 10, inc: 2 },
   reload:  { level: 0, max: 5, cost: 60, val: 1.1, inc: -0.15 },
@@ -415,44 +541,47 @@ const player = {
   x:200, y:GROUND_Y-1, w:14, h:38, vx:0, vy:0, onGround:false, climbing:false, jumpCount:0,
   facing:1, hp:100, maxHp:100, ammo:10, maxAmmo:10, reloading:false, reloadTime:1.1, reloadTimer:0,
   shootCd:0, shootCdMax:0.22, dynaCd:0, dashCd:0, isDashing:false, dashTime:0, 
-  walkPhase:0, invuln:0, alive:true, speed: 250,
-  classId: 0, dmgTakenMult: 1.0
+  walkPhase:0, invuln:0, alive:true, speed: 250, classId: 0, dmgTakenMult: 1.0, frenzyTimer: 0
 };
 function playerRect(){ return {x:player.x-7, y:player.y-38, w:14, h:38}; }
 
 function applyClassStats() {
-  player.classId = equippedSkin;
-  player.dmgTakenMult = 1.0;
-  
-  let baseSpd = shopStats.speed.val;
-  let baseHp = shopStats.maxHp.val;
+  player.classId = equippedSkin; player.dmgTakenMult = 1.0;
+  let baseSpd = shopStats.speed.val; let baseHp = shopStats.maxHp.val;
 
-  if (player.classId === 1) { // Bandit
-    baseSpd *= 1.2; player.dmgTakenMult = 1.2; 
-  } else if (player.classId === 2) { // Cyborg
-    baseHp += 50; player.dmgTakenMult = 0.8; baseSpd *= 0.9;
-  }
+  if (player.classId === 1) { baseSpd *= 1.2; player.dmgTakenMult = 1.2; } 
+  else if (player.classId === 2) { baseHp += 50; player.dmgTakenMult = 0.8; baseSpd *= 0.9; }
+  else if (player.classId === 3) { baseHp -= 20; player.dmgTakenMult = 1.1; baseSpd *= 1.05; }
   
-  player.speed = baseSpd;
-  player.maxHp = baseHp;
+  player.speed = baseSpd; player.maxHp = baseHp;
 }
-
 function syncStats(){ 
-  player.maxAmmo = shopStats.ammo.val; player.reloadTime = shopStats.reload.val; 
-  applyClassStats();
+  player.maxAmmo = shopStats.ammo.val; player.reloadTime = shopStats.reload.val; applyClassStats();
   let tier = shopStats.gunTier.level;
-  if (tier === 0) player.shootCdMax = 0.22; else if (tier === 1) player.shootCdMax = 0.22; else if (tier === 2) player.shootCdMax = 0.4; else if (tier === 3) player.shootCdMax = 0.12; 
+  if (tier === 0) player.shootCdMax = 0.22; 
+  else if (tier === 1) player.shootCdMax = 0.22; 
+  else if (tier === 2) player.shootCdMax = 0.4; 
+  else if (tier === 3) player.shootCdMax = 0.12; 
+  else if (tier === 4) player.shootCdMax = 0.6; 
+  else if (tier === 5) player.shootCdMax = 0.35; 
 }
 
 function resetPlayer(){
   player.x=200; player.y=GROUND_Y-1; player.vx=0; player.vy=0; player.climbing = false; player.jumpCount = 0; player.dynaCd = 0; player.dashCd = 0; player.isDashing = false;
-  player.hp=100; player.ammo=10; player.reloading=false; player.reloadTimer=0; player.shootCd=0; player.invuln=0; player.alive=true; player.facing=1;
-  gold = 0; combo = 0; comboTimer = 0;
+  player.hp=100; player.ammo=10; player.reloading=false; player.reloadTimer=0; player.shootCd=0; player.invuln=0; player.alive=true; player.facing=1; player.frenzyTimer=0;
   
-  shopStats.gunTier.level = equippedGun; shopStats.dmg.level=0; shopStats.dmg.cost=50; shopStats.dmg.val=35;
-  shopStats.ammo.level=0; shopStats.ammo.cost=40; shopStats.ammo.val=10; shopStats.reload.level=0; shopStats.reload.cost=60; shopStats.reload.val=1.1;
-  shopStats.maxHp.level=0; shopStats.maxHp.cost=80; shopStats.maxHp.val=100; shopStats.armor.level=0; shopStats.armor.cost=100; shopStats.armor.val=0;
+  gold = isPractice ? 999999 : 0;
+  combo = 0; comboTimer = 0; nightmareTimer = 30.0;
+  
+  shopStats.gunTier.level = isPractice ? 0 : equippedGun; 
+  shopStats.dmg.level=0; shopStats.dmg.cost=50; shopStats.dmg.val=35;
+  shopStats.ammo.level=0; shopStats.ammo.cost=40; shopStats.ammo.val=10; 
+  shopStats.reload.level=0; shopStats.reload.cost=60; shopStats.reload.val=1.1;
+  shopStats.maxHp.level=0; shopStats.maxHp.cost=80; shopStats.maxHp.val=100; 
+  shopStats.armor.level=0; shopStats.armor.cost=100; shopStats.armor.val=0;
   shopStats.speed.level=0; shopStats.speed.cost=50; shopStats.speed.val=250;
+  
+  shopStats.heal.cost = (difficultyMode === 'nightmare' || difficultyMode === 'hell') ? 40 : 30;
   
   syncStats(); player.hp = player.maxHp; 
 }
@@ -461,34 +590,70 @@ function resetPlayer(){
 // BULLETS & COMBAT
 // ---------------------------------------------------------------
 let bullets = [];
-function spawnBullet(x,y,vx,vy,from, life=1.5, dmg=0){ 
-  // 플레이어가 쏘는 총알은 20% 확률로 크리티컬!
+function spawnBullet(x,y,vx,vy,from, life=1.5, dmg=0, type='normal'){ 
   let isCrit = false;
   if(from === 'player') isCrit = Math.random() < 0.20;
-  bullets.push({x,y,vx,vy,from,dead:false,life:life, dmg:dmg, isCrit:isCrit}); 
+  bullets.push({x,y,vx,vy,from,dead:false,life:life, dmg:dmg, isCrit:isCrit, type:type, hitList:[]}); 
 }
 
 function updateBullets(dt){
   for(let i=bullets.length-1;i>=0;i--){
     const b = bullets[i]; b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
     if(b.life<=0 || b.x<-50 || b.x>WORLD_W+50 || b.y<-20 || b.y>H+20){ bullets.splice(i,1); continue; }
-    const br = {x:b.x-3,y:b.y-3,w:6,h:6};
+    
+    let hitW = 6;
+    if (b.type === 'lightning') hitW = 20;
+    if (b.type === 'hellfire' || b.type === 'plasma_player') hitW = 16;
+    if (b.type === 'sniper_player') hitW = 30;
+    const br = {x:b.x - (hitW/2), y:b.y-3, w:hitW, h:6};
     
     let hit = false;
     for(const p of props){ if(!p.dead && aabb(br, p)){ damageProp(p, shopStats.dmg.val); hit=true; break; } }
-    if(hit){ bullets.splice(i,1); continue; }
+    if(hit) {
+        if(b.type === 'plasma_player') {
+            explodeDynamite(b.x, b.y, 'player_plasma', Math.floor(shopStats.dmg.val * 2.0));
+            bullets.splice(i,1); continue;
+        } else if(b.type !== 'lightning' && b.type !== 'hellfire' && b.type !== 'sniper_player'){ 
+            bullets.splice(i,1); continue; 
+        }
+    }
 
     if(b.from==='player'){
+      let hitEnemy = false;
       for(const en of enemies){
         if(!en.alive) continue;
         if(aabb(br, enemyRect(en))){ 
-          let finalDmg = shopStats.dmg.val;
-          if(b.isCrit) finalDmg = Math.floor(finalDmg * 2); // 크리티컬 데미지!
-          
-          damageEnemy(en, finalDmg, b.x, b.y, b.vx, 'player', b.isCrit); 
-          bullets.splice(i,1); break; 
+          if(b.type === 'lightning' || b.type === 'hellfire' || b.type === 'sniper_player' || b.type === 'plasma_player') {
+             if(!b.hitList.includes(en)){
+                b.hitList.push(en);
+                
+                let finalDmg = shopStats.dmg.val;
+                if (b.type === 'hellfire') finalDmg = Math.floor(shopStats.dmg.val * 1.5);
+                else if (b.type === 'lightning') finalDmg = Math.floor(shopStats.dmg.val * 0.85);
+                else if (b.type === 'sniper_player') finalDmg = Math.floor(shopStats.dmg.val * 3.5);
+                else if (b.type === 'plasma_player') finalDmg = Math.floor(shopStats.dmg.val * 1.5); 
+                
+                let c = b.isCrit;
+                if (b.type === 'sniper_player') c = Math.random() < 0.6; 
+                if(c) finalDmg = Math.floor(finalDmg * 2); 
+                
+                damageEnemy(en, finalDmg, b.x, b.y, b.vx, 'player', c);
+
+                if (b.type === 'plasma_player') {
+                    explodeDynamite(b.x, b.y, 'player_plasma', Math.floor(shopStats.dmg.val * 2.0));
+                    hitEnemy = true;
+                }
+             }
+             if(b.type === 'plasma_player' && hitEnemy) break;
+          } else {
+             let finalDmg = shopStats.dmg.val;
+             if(b.isCrit) finalDmg = Math.floor(finalDmg * 2); 
+             damageEnemy(en, finalDmg, b.x, b.y, b.vx, 'player', b.isCrit); 
+             hitEnemy = true; break; 
+          }
         }
       }
+      if(hitEnemy && b.type !== 'lightning' && b.type !== 'hellfire' && b.type !== 'sniper_player') { bullets.splice(i,1); continue; }
     } else {
       if(player.alive && player.invuln<=0 && !player.isDashing && aabb(br, playerRect())){ 
         damagePlayer(b.dmg || 14); bullets.splice(i,1); 
@@ -496,14 +661,29 @@ function updateBullets(dt){
     }
   }
 }
+
 function drawBullets(){
   for(const b of bullets){
     const bx = Math.round(b.x); const by = Math.round(b.y); const isPlayer = b.from === 'player';
-    ctx.fillStyle = '#0a0502'; ctx.fillRect(bx - 5, by - 3, 10, 6);
-    // 크리티컬 총알은 노란색으로 빛남
-    ctx.fillStyle = b.isCrit ? '#ffea00' : (isPlayer ? '#ffb347' : '#e62200'); 
-    ctx.fillRect(bx - 4, by - 2, 8, 4);
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(bx - 2, by - 1, 6, 2);
+    if(b.type === 'lightning') {
+      ctx.fillStyle = '#00ffff'; ctx.fillRect(bx - 10, by - 2, 20, 4);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(bx - 8, by - 1, 16, 2);
+    } else if (b.type === 'hellfire') {
+      ctx.fillStyle = '#ff0000'; ctx.beginPath(); ctx.arc(bx, by, 6, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#ffff00'; ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#ffaa00'; ctx.fillRect(bx - (b.vx>0?15:-5), by - 2, 10, 4);
+    } else if (b.type === 'sniper_player') {
+      ctx.fillStyle = '#ffaa00'; ctx.fillRect(bx - 15, by - 2, 30, 4);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(bx - 10, by - 1, 20, 2);
+    } else if (b.type === 'plasma_player') {
+      ctx.fillStyle = '#00ffaa'; ctx.beginPath(); ctx.arc(bx, by, 8, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(bx, by, 4, 0, Math.PI*2); ctx.fill();
+    } else {
+      ctx.fillStyle = '#0a0502'; ctx.fillRect(bx - 5, by - 3, 10, 6);
+      ctx.fillStyle = b.isCrit ? '#ffea00' : (isPlayer ? '#ffb347' : '#e62200'); 
+      ctx.fillRect(bx - 4, by - 2, 8, 4);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(bx - 2, by - 1, 6, 2);
+    }
   }
 }
 
@@ -515,29 +695,52 @@ function enemyRect(en){ const w = 7 * en.scale; const h = 38 * en.scale; return 
 
 function makeEnemy(type){
   const fromLeft = Math.random()<0.5; const spawnDist = camera.x + (fromLeft ? -50 : W + 50); const ex = clamp(spawnDist, 10, WORLD_W-10);
-  let diffMod = 1.0;
-  if (difficultyMode === 'hard') diffMod = 1.5;
-  if (difficultyMode === 'nightmare') diffMod = 2.2;
-  
+  let diffMod = (difficultyMode === 'hell') ? 3.0 : (difficultyMode === 'nightmare' ? 2.2 : (difficultyMode === 'hard' ? 1.5 : 1.0));
   const speedMul = clamp(1 + (waveNum * 0.05), 1.0, 3.0); 
   const hpMul = 1 + (waveNum * 0.25); 
   const dmgMul = 1 + (waveNum * 0.15); 
-  
   let bossLevel = Math.floor(waveNum / 5);
 
-  if(type === 'boss'){ 
+  if(type === 'boss' || type === 'necromancer' || type === 'inferno' || type === 'void_lord' || type === 'dragon'){ 
     let bHp = 800 * hpMul * diffMod; let bSpeed = 45 * speedMul * diffMod;
+    let sc = clamp(2.5 + bossLevel*0.2, 2.5, 4.0);
+    
+    if (type === 'inferno') { bHp *= 1.2; bSpeed *= 0.8; }
+    if (type === 'void_lord') { bHp *= 0.8; bSpeed *= 1.4; }
+    if (type === 'dragon') { bHp *= 1.8; bSpeed *= 0.6; sc = clamp(4.0 + bossLevel*0.2, 4.0, 5.0); }
+
     return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?bSpeed:-bSpeed, vy:0, hp:bHp, maxHp:bHp, alive:true, walkPhase:0, 
-             shootCd: 1.5, skillCd: 3.0, bossLevel: bossLevel, onGround:true, scale: clamp(2.5 + bossLevel*0.2, 2.5, 4.0), dmgBase: 25*dmgMul }; 
+             shootCd: 1.5, skillCd: 3.0, dashTime: 0, breathTimer: 0, bossLevel: bossLevel, onGround:true, scale: sc, dmgBase: 25*dmgMul }; 
   } 
   else if(type==='bomber'){
     let spd = clamp(110 * speedMul * diffMod, 110, 400);
     return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?spd:-spd, vy:0, hp:30*hpMul*diffMod, maxHp:30*hpMul*diffMod, alive:true, walkPhase:rand(0,6), onGround:true, scale: 1, dmgBase: 50*dmgMul, fuse: 0 };
   }
+  else if(type==='cultist'){
+    let spd = 60 * speedMul * diffMod;
+    return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?spd:-spd, vy:0, hp:50*hpMul*diffMod, maxHp:50*hpMul*diffMod, alive:true, walkPhase:rand(0,6), skillCd: rand(1, 2), onGround:true, scale: 1, dmgBase: 25*dmgMul };
+  }
+  else if(type==='ghost'){
+    let spd = 70 * speedMul * diffMod; let gy = GROUND_Y - 20;
+    return { type, x: ex, y: gy, vx: fromLeft?spd:-spd, vy:0, hp:25*hpMul*diffMod, maxHp:25*hpMul*diffMod, alive:true, walkPhase:0, onGround:true, scale: 1, dmgBase: 20*dmgMul };
+  }
+  else if(type==='demon'){
+    let spd = 150 * speedMul * diffMod;
+    return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?spd:-spd, vy:0, hp:60*hpMul*diffMod, maxHp:60*hpMul*diffMod, alive:true, walkPhase:rand(0,6), attackCd:0, shootCd: 1.5, onGround:true, scale: 1.1, dmgBase: 35*dmgMul }; 
+  }
+  else if(type==='tank'){
+    return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?30*speedMul*diffMod:-30*speedMul*diffMod, vy:0, hp:150*hpMul*diffMod, maxHp:150*hpMul*diffMod, alive:true, walkPhase:rand(0,6), attackCd:0, onGround:true, scale: 1.3, dmgBase: 30*dmgMul }; 
+  }
+  else if(type==='assassin'){
+    return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?130*speedMul*diffMod:-130*speedMul*diffMod, vy:0, hp:30*hpMul*diffMod, maxHp:30*hpMul*diffMod, alive:true, walkPhase:rand(0,6), attackCd:0, skillCd: 0, dashTime: 0, onGround:true, scale: 0.9, dmgBase: 20*dmgMul }; 
+  }
+  else if(type==='sniper'){
+    return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?40*speedMul*diffMod:-40*speedMul*diffMod, vy:0, hp:35*hpMul*diffMod, maxHp:35*hpMul*diffMod, alive:true, walkPhase:rand(0,6), shootCd: 2.0, onGround:true, scale: 1, dmgBase: 25*dmgMul }; 
+  }
   else if(type==='grunt'){ 
     return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?70*speedMul*diffMod:-70*speedMul*diffMod, vy:0, hp:60*hpMul*diffMod, maxHp:60*hpMul*diffMod, alive:true, walkPhase:rand(0,6), attackCd:0, onGround:true, scale: 1, dmgBase: 15*dmgMul }; 
   } 
-  else { 
+  else { // gunslinger
     return { type, x: ex, y: GROUND_Y-1, vx: fromLeft?55*speedMul*diffMod:-55*speedMul*diffMod, vy:0, hp:40*hpMul*diffMod, maxHp:40*hpMul*diffMod, alive:true, walkPhase:rand(0,6), shootCd: rand(0.5,1.2), onGround:true, scale: 1, dmgBase: 12*dmgMul }; 
   }
 }
@@ -547,15 +750,22 @@ function startWave(){
   if(waveNum % 5 === 0) {
     banner = {text:`WARNING: LV.${Math.floor(waveNum/5)} BOSS APPROACHING!`, timer:3.5}; 
     let bossesToSpawn = 1;
-    if (difficultyMode === 'nightmare' && waveNum >= 15) bossesToSpawn = 2;
-    for(let i=0; i<bossesToSpawn; i++) enemies.push(makeEnemy('boss')); 
+    if ((difficultyMode === 'nightmare' || difficultyMode === 'hell') && waveNum >= 15) bossesToSpawn = 2;
+    for(let i=0; i<bossesToSpawn; i++) {
+        let bType = 'boss';
+        if (difficultyMode === 'hell') {
+            bType = 'dragon';
+        } else if (difficultyMode === 'nightmare') {
+            const nBosses = ['necromancer', 'inferno', 'void_lord'];
+            bType = nBosses[Math.floor(Math.random() * nBosses.length)];
+        }
+        enemies.push(makeEnemy(bType)); 
+    }
     addShake(20);
-    waveEnemiesToSpawn = difficultyMode === 'nightmare' ? 6 : 0;
+    waveEnemiesToSpawn = difficultyMode === 'hell' ? 8 : (difficultyMode === 'nightmare' ? 6 : 0);
   } else { 
     let baseCount = 3 + waveNum*1.8;
-    let diffMult = 1.0;
-    if (difficultyMode === 'hard') diffMult = 1.5;
-    if (difficultyMode === 'nightmare') diffMult = 2.5;
+    let diffMult = (difficultyMode === 'hell') ? 3.5 : (difficultyMode === 'nightmare' ? 2.5 : (difficultyMode === 'hard' ? 1.5 : 1.0));
     waveEnemiesToSpawn = Math.floor(baseCount * diffMult); 
   }
   spawnTimer = 0.2;
@@ -564,39 +774,38 @@ function startWave(){
 function damageEnemy(en, dmg, hx, hy, bulletVx, source='player', isCrit = false){
   en.hp -= dmg; playSnd('hit');
   
-  // 크리티컬 이펙트 및 플로팅 데미지 텍스트 
   if (isCrit) {
     spawnParticles(hx, hy, 18, ['#ffff00','#ffaa00','#ffffff'], Math.abs(bulletVx)*0.4 + 150, 0.5, 4);
-    spawnText(en.x, en.y - 45 - (en.scale*10), `CRIT ${dmg}!`, '#ffeb3b', 1.5, 1.0);
-    addShake(5);
+    spawnText(en.x, en.y - 45 - (en.scale*10), `CRIT ${dmg}!`, '#ffeb3b', 1.5, 1.0); addShake(5);
   } else {
     spawnParticles(hx, hy, 12, ['#ff0000','#aa0000','#770000'], Math.abs(bulletVx)*0.3 + 100, 0.4, 3);
-    spawnText(en.x, en.y - 35 - (en.scale*10), `${dmg}`, '#ffffff', 1.0, 0.7);
-    addShake(2);
+    spawnText(en.x, en.y - 35 - (en.scale*10), `${dmg}`, '#ffffff', 1.0, 0.7); addShake(2);
   }
   
-  if(en.hp<=0 && en.alive){
+  if(en.hp<=0 && en.alive && en.type !== 'dummy'){
     en.alive = false; let coins = 0; playSnd('exp');
     if(en.type === 'bomber'){ explodeDynamite(en.x, en.y, 'enemy_bomber', en.dmgBase); }
     
-    if(source === 'player'){
+    if(source === 'player' && !isPractice){
       addCombo();
-      let comboMultiplier = 1 + (combo * 0.1); 
-      let extraGold = Math.floor(combo / 5);   
-
-      if(en.type === 'boss'){ 
+      let comboMultiplier = 1 + (combo * 0.1); let extraGold = Math.floor(combo / 5);   
+      const isBoss = (en.type === 'boss' || en.type === 'necromancer' || en.type === 'inferno' || en.type === 'void_lord' || en.type === 'dragon');
+      if(isBoss){ 
         score += Math.floor(2000 * comboMultiplier); coins = 25 + extraGold; addShake(25); 
         spawnParticles(en.x, en.y-40, 150, ['#ff0000','#880000','#550000','#ff5555'], 450, 1.2, 6); 
       } else { 
-        score += Math.floor((en.type==='grunt' || en.type==='bomber' ? 100 : 150) * comboMultiplier); 
-        coins = (en.type==='grunt' || en.type==='bomber' ? 1 : 2) + extraGold; addShake(6); 
+        score += Math.floor((en.type==='grunt' || en.type==='bomber' || en.type==='tank' || en.type==='demon' ? 100 : 150) * comboMultiplier); 
+        coins = (en.type==='grunt' || en.type==='bomber' ? 1 : (en.type==='demon'? 3 : 2)) + extraGold; addShake(6); 
         spawnParticles(en.x, en.y-20, 25, ['#ff0000','#aa0000','#550000'], 250, 0.6, 4); 
       }
       spawnCoin(en.x, en.y-20, coins);
+      if (Math.random() < 0.1) items.push({ type:'heal', x:en.x, y:en.y-20, vx:rand(-100,100), vy:rand(-250,-150), w:12, h:12, life:10, onGround:false });
       
-      // 10% 확률로 하트(회복 아이템) 드랍
-      if (Math.random() < 0.1) {
-        items.push({ type:'heal', x:en.x, y:en.y-20, vx:rand(-100,100), vy:rand(-250,-150), w:12, h:12, life:10, onGround:false });
+      if (difficultyMode === 'nightmare' || difficultyMode === 'hell') {
+          let dropChance = difficultyMode === 'hell' ? 0.08 : 0.06;
+          if (isBoss || Math.random() < dropChance) {
+              items.push({ type:'cursed_gem', x:en.x, y:en.y-20, vx:rand(-150,150), vy:rand(-300,-150), w:12, h:12, life:10, onGround:false });
+          }
       }
     }
   }
@@ -605,36 +814,41 @@ function damageEnemy(en, dmg, hx, hy, bulletVx, source='player', isCrit = false)
 function damagePlayer(dmg){
   if(player.invuln>0 || player.isDashing) return;
   let actualDmg = Math.floor(dmg * (1 - shopStats.armor.val) * player.dmgTakenMult); 
-  playSnd('hit');
   
-  player.hp -= actualDmg; player.invuln = 0.6; addShake(10);
-  combo = 0; 
+  if (player.frenzyTimer > 0) {
+      actualDmg = Math.floor(actualDmg * 2.0);
+  }
+
+  playSnd('hit');
+  player.hp -= actualDmg; player.invuln = 0.6; addShake(10); combo = 0; 
   spawnParticles(player.x, player.y-20, 14, ['#ff3a3a','#a80000','#ffdada'], 260, 0.5, 4);
   spawnText(player.x, player.y-40, `-${actualDmg}`, '#ff3a3a', 1.2, 1);
-  
   if(player.hp<=0){ 
     player.hp = 0; player.alive = false; gameState = 'gameover'; 
-    let earned = Math.floor(score / 50) + gold;
-    globalCoins += earned; saveGlobal(); earnedCoinsThisRun = earned;
+    let earned = Math.floor(score / 50) + gold; 
+    if (!isPractice) {
+        globalCoins += earned; saveGlobal(); earnedCoinsThisRun = earned;
+    }
   }
 }
 
 function updateEnemies(dt){
-  let diffMod = 1.0;
-  if (difficultyMode === 'hard') diffMod = 1.5;
-  if (difficultyMode === 'nightmare') diffMod = 2.2;
+  let diffMod = (difficultyMode === 'hell') ? 3.0 : (difficultyMode === 'nightmare' ? 2.2 : (difficultyMode === 'hard' ? 1.5 : 1.0));
   
   for(let i=enemies.length-1;i>=0;i--){
     const en = enemies[i]; if(!en.alive){ enemies.splice(i,1); continue; }
     en.walkPhase += dt*8; const dx = player.x - en.x; const dist = Math.abs(dx); const dir = dx>0?1:-1;
 
-    if(en.type === 'boss'){
+    if (en.type === 'dummy') {
+        en.vx = 0;
+        if (en.hp < 500000) en.hp = 999999;
+    }
+    else if(en.type === 'boss'){
       en.vx = dir * Math.abs(en.vx); en.shootCd -= dt; en.skillCd -= dt;
       if(en.shootCd <= 0 && player.alive){
         const gunY = en.y - (26 * en.scale * 0.7); const baseAng = Math.atan2((player.y-19) - gunY, player.x-en.x);
         let spread = clamp(3 + Math.floor(en.bossLevel / 2) + (difficultyMode==='nightmare'?3:0), 3, 11); 
-        let angDiff = 0.15; 
-        let bulletSpeed = clamp(280 * diffMod * (1 + waveNum*0.02), 280, 800);
+        let angDiff = 0.15; let bulletSpeed = clamp(280 * diffMod * (1 + waveNum*0.02), 280, 800);
         for(let a=-Math.floor(spread/2); a<=Math.floor(spread/2); a++) { 
           spawnBullet(en.x, gunY, Math.cos(baseAng+a*angDiff)*bulletSpeed, Math.sin(baseAng+a*angDiff)*bulletSpeed, 'enemy', 4.0, en.dmgBase); 
         }
@@ -651,52 +865,208 @@ function updateEnemies(dt){
         en.skillCd = Math.max(2.0, 5.0 - (en.bossLevel*0.2)); 
         playSnd('jump'); addShake(5);
       }
-    } else if(en.type === 'bomber'){
+    } 
+    else if (en.type === 'dragon') {
+      en.vx = dir * Math.abs(en.vx); en.shootCd -= dt; en.skillCd -= dt;
+      
+      spawnParticles(en.x + rand(-40, 40), en.y - rand(0, 150), 2, ['#ff4400', '#ff0000', '#ffff00'], 80, 0.5, 5);
+
+      if (en.breathTimer > 0) {
+          en.breathTimer -= dt; en.vx = 0; 
+          if (Math.random() < 0.4) {
+              const gunY = en.y - (35 * en.scale * 0.7); let spread = rand(-0.4, 0.4);
+              spawnBullet(en.x + dir*40, gunY, dir * rand(500, 900), spread * 600, 'enemy', 2.0, en.dmgBase * 0.7);
+              spawnParticles(en.x + dir*50, gunY, 5, ['#ff4400', '#ff0000', '#ffff00'], 400, 0.5, 6);
+          }
+      } else {
+          if (en.shootCd <= 0 && player.alive) {
+              en.breathTimer = 1.2; 
+              en.shootCd = Math.max(2.0, 4.0 - (en.bossLevel*0.2)); playSnd('exp'); addShake(15);
+          }
+          if (en.skillCd <= 0 && player.alive) {
+              for(let j=0; j<6; j++){
+                 spawnDynamite(player.x + rand(-250, 250), -100 - rand(0,400), rand(-50,50), rand(300,600), 'enemy_meteor', en.dmgBase * 1.5, 'meteor');
+              }
+              en.skillCd = Math.max(3.0, 6.0 - (en.bossLevel*0.2)); playSnd('jump'); addShake(10);
+          }
+      }
+    }
+    else if (en.type === 'necromancer') {
+      en.vx = dir * Math.abs(en.vx); en.shootCd -= dt; en.skillCd -= dt;
+      if(en.shootCd <= 0 && player.alive){
+        for (let j=-1; j<=1; j++) {
+           let tx = player.x + j*60;
+           spawnDynamite(tx, -50, rand(-20,20), rand(300,500), 'enemy_meteor', en.dmgBase * 1.2, 'meteor');
+        }
+        en.shootCd = Math.max(1.5, 3.5 - (en.bossLevel*0.2)); playSnd('shoot'); addShake(8);
+      }
+      if(en.skillCd <= 0 && player.alive){
+        let gCount = Math.min(4, 1 + Math.floor(en.bossLevel/2));
+        for(let j=0; j<gCount; j++){
+           let gx = en.x + rand(-50,50);
+           enemies.push({ type: 'ghost', x: gx, y: GROUND_Y-20, vx: dir*rand(40,80), vy:0, hp:30, maxHp:30, alive:true, walkPhase:0, onGround:true, scale: 1, dmgBase: en.dmgBase });
+        }
+        en.skillCd = Math.max(3.0, 7.0 - (en.bossLevel*0.3)); playSnd('jump'); addShake(5);
+      }
+    }
+    else if (en.type === 'inferno') {
+      en.vx = dir * Math.abs(en.vx); en.shootCd -= dt; en.skillCd -= dt;
+      if(en.shootCd <= 0 && player.alive){
+        for(let j=0; j<3; j++) {
+           let tx = dir * rand(200, 600); let ty = rand(-300, -700);
+           spawnDynamite(en.x, en.y-40, tx, ty, 'enemy', en.dmgBase * 1.2);
+        }
+        en.shootCd = Math.max(1.5, 3.0 - (en.bossLevel*0.2)); playSnd('shoot'); addShake(8);
+      }
+      if(en.skillCd <= 0 && player.alive){
+        let mCount = Math.min(3, 1 + Math.floor(en.bossLevel/2));
+        for(let j=0; j<mCount; j++){
+           spawnDynamite(player.x + rand(-100, 100), -50, rand(-20,20), rand(300,500), 'enemy_meteor', en.dmgBase * 1.5, 'meteor');
+        }
+        en.skillCd = Math.max(2.5, 5.0 - (en.bossLevel*0.3)); playSnd('jump'); addShake(10);
+      }
+    }
+    else if (en.type === 'void_lord') {
+      en.shootCd -= dt; en.skillCd -= dt; en.dashTime -= dt;
+      if (en.dashTime > 0) {
+          en.vx = dir * 500;
+          if (dist < 40 && player.alive) { damagePlayer(en.dmgBase * 1.5); }
+      } else {
+          en.vx = dir * Math.abs(en.vx);
+      }
+      if(en.shootCd <= 0 && player.alive){
+        const gunY = en.y - (26 * en.scale * 0.7);
+        spawnBullet(en.x, gunY, dir * 1200, 0, 'enemy_sniper', 3.0, en.dmgBase * 2.0);
+        spawnParticles(en.x+dir*30, gunY, 15, ['#aa00ff','#ffffff'], 300, 0.4, 4);
+        en.shootCd = Math.max(1.0, 2.5 - (en.bossLevel*0.15)); playSnd('shoot'); addShake(10);
+      }
+      if(en.skillCd <= 0 && player.alive){
+        en.dashTime = 0.5;
+        en.skillCd = Math.max(2.0, 4.0 - (en.bossLevel*0.2)); playSnd('dash'); addShake(5);
+      }
+    }
+    else if(en.type === 'bomber'){
       en.vx = dir * Math.abs(en.vx);
-      if (dist < 40) {
-         en.fuse += dt; en.vx = 0; 
-         if (en.fuse > 0.4) {
-             explodeDynamite(en.x, en.y, 'enemy_bomber', en.dmgBase);
-             en.hp = 0; en.alive = false;
-         }
-      } else { en.fuse = 0; }
-    } else if(en.type==='grunt'){
-      if(dist>20) en.vx = dir * Math.abs(en.vx); else en.vx = 0;
-      en.attackCd -= dt; if(dist<=20 && en.attackCd<=0 && player.alive){ damagePlayer(en.dmgBase); en.attackCd = Math.max(0.3, 0.9 - waveNum*0.02); }
-    } else {
+      if (dist < 40) { en.fuse += dt; en.vx = 0; if (en.fuse > 0.4) { explodeDynamite(en.x, en.y, 'enemy_bomber', en.dmgBase); en.hp = 0; en.alive = false; } } else { en.fuse = 0; }
+    } 
+    else if(en.type === 'cultist'){
+      if(dist<200) en.vx = -dir * Math.abs(en.vx); else if(dist>300) en.vx = dir * Math.abs(en.vx); else en.vx = 0;
+      en.skillCd -= dt;
+      if (en.skillCd <= 0 && player.alive) {
+          spawnDynamite(player.x, -50, 0, 400, 'enemy_meteor', en.dmgBase, 'meteor');
+          en.skillCd = Math.max(1.5, 3.0 - waveNum*0.05); playSnd('shoot');
+          spawnParticles(en.x, en.y-25, 10, ['#a300cc','#ff00ff'], 150, 0.4, 4);
+      }
+    }
+    else if(en.type === 'demon'){
+      if(dist < 120) en.vx = -dir * Math.abs(en.vx); 
+      else en.vx = dir * Math.abs(en.vx);
+      en.shootCd -= dt;
+      if(en.shootCd <= 0 && player.alive){
+          const gunY = en.y - 20;
+          spawnBullet(en.x, gunY, dir * 700, 0, 'enemy', 2.0, en.dmgBase);
+          spawnParticles(en.x+dir*15, gunY, 10, ['#ff0000','#000000'], 200, 0.3, 4);
+          en.shootCd = Math.max(0.8, 1.5 - waveNum*0.05); playSnd('shoot');
+      }
+    }
+    else if(en.type === 'ghost'){
+      en.y = (GROUND_Y - 20) + Math.sin(Date.now()/150)*5;
+      if(dist > 10) en.x += dir * Math.abs(en.vx) * dt;
+      if (dist < 20 && Math.abs(player.y - en.y) < 40) {
+          damagePlayer(en.dmgBase); en.hp = 0; en.alive = false; 
+          spawnParticles(en.x, en.y, 20, ['#ffffff','#00ffff'], 150, 0.5, 3); playSnd('hit');
+      }
+      en.vx = 0; 
+    }
+    else if(en.type==='tank' || en.type==='grunt'){
+      if(dist>25) en.vx = dir * Math.abs(en.vx); else en.vx = 0;
+      en.attackCd -= dt; if(dist<=30 && en.attackCd<=0 && player.alive){ damagePlayer(en.dmgBase); en.attackCd = Math.max(0.5, 1.2 - waveNum*0.02); }
+    }
+    else if (en.type === 'assassin') {
+      en.skillCd -= dt; en.attackCd -= dt;
+      if(dist < 180 && en.skillCd <= 0){ en.vx = dir * 400; en.skillCd = 2.5; en.dashTime = 0.3; playSnd('dash'); }
+      if (en.dashTime > 0) { 
+          en.dashTime -= dt; 
+          if(dist < 20 && en.attackCd <= 0){ damagePlayer(en.dmgBase); en.attackCd = 1.0; }
+      } else {
+          if(dist > 20) en.vx = dir * 130 * diffMod; else en.vx = 0;
+          if(dist <= 20 && en.attackCd <= 0){ damagePlayer(en.dmgBase); en.attackCd = 1.0; }
+      }
+    }
+    else if (en.type === 'sniper') {
+      if(dist < 300) en.vx = -dir * Math.abs(en.vx); else if(dist > 400) en.vx = dir * Math.abs(en.vx); else en.vx = 0;
+      en.shootCd -= dt;
+      if(en.shootCd <= 0 && player.alive){
+          const gunY = en.y - 26; let bSpeed = 1000;
+          spawnBullet(en.x, gunY, dir * bSpeed, 0, 'enemy_sniper', 2.0, en.dmgBase * 1.5);
+          en.shootCd = Math.max(1.5, 3.0 - waveNum*0.05); playSnd('shoot');
+          spawnParticles(en.x+dir*15, gunY, 5, ['#ff0000','#ffffff'], 200, 0.2, 3);
+      }
+    }
+    else { // gunslinger
       if(dist<150) en.vx = -dir * Math.abs(en.vx); else if(dist>250) en.vx = dir * Math.abs(en.vx); else en.vx = 0;
       en.shootCd -= dt;
       if(en.shootCd<=0 && player.alive){
-        const gunY = en.y - 26; 
-        let bSpeed = clamp(260 * diffMod * (1 + waveNum*0.02), 260, 900);
+        const gunY = en.y - 26; let bSpeed = clamp(260 * diffMod * (1 + waveNum*0.02), 260, 900);
         spawnBullet(en.x, gunY, Math.cos(Math.atan2((player.y-19)-gunY, dx))*bSpeed, Math.sin(Math.atan2((player.y-19)-gunY, dx))*bSpeed, 'enemy', 2.0, en.dmgBase);
         spawnParticles(en.x+dir*15, gunY, 4, ['#ffcf7a','#ff8a3a'], 120, 0.2, 3);
         en.shootCd = Math.max(0.2, (rand(1.1,1.8) - waveNum*0.05) / diffMod); playSnd('shoot');
       }
     }
-    en.x += en.vx*dt; en.x = clamp(en.x, 10, WORLD_W-10);
+    
+    if (en.type !== 'ghost' && en.type !== 'dummy') { en.x += en.vx*dt; }
+    en.x = clamp(en.x, 10, WORLD_W-10);
   }
 }
 
 function drawEnemies(){
   for(const en of enemies){
-    let pal = en.type === 'boss' ? BOSS_PAL : (en.type==='grunt' ? GRUNT_PAL : GUNSLINGER_PAL);
-    if(en.type === 'bomber') pal = BOMBER_PAL;
-    const facing = en.vx>=0?1:-1;
+    let pal = GUNSLINGER_PAL;
+    if (en.type === 'dummy') pal = DUMMY_PAL;
+    else if (en.type === 'boss') pal = BOSS_PAL;
+    else if (en.type === 'necromancer') pal = NECRO_PAL;
+    else if (en.type === 'inferno') pal = INFERNO_PAL;
+    else if (en.type === 'void_lord') pal = VOID_PAL;
+    else if (en.type === 'dragon') pal = DRAGON_PAL;
+    else if (en.type === 'demon') pal = DEMON_PAL;
+    else if (en.type === 'bomber') pal = BOMBER_PAL;
+    else if (en.type === 'grunt') pal = GRUNT_PAL;
+    else if (en.type === 'cultist') pal = CULTIST_PAL;
+    else if (en.type === 'ghost') pal = GHOST_PAL;
+    else if (en.type === 'tank') pal = TANK_PAL;
+    else if (en.type === 'assassin') pal = ASSASSIN_PAL;
+    else if (en.type === 'sniper') pal = SNIPER_PAL;
+
+    let facing = en.type==='ghost' ? (player.x > en.x ? 1 : -1) : (en.vx>=0?1:-1);
+    if(en.vx === 0 && en.type !== 'ghost') facing = player.x > en.x ? 1 : -1;
+    if(en.type === 'void_lord' && en.dashTime > 0) facing = en.vx>=0?1:-1;
+    if(en.type === 'dummy') facing = -1;
     
-    if(en.type === 'bomber' && en.fuse > 0) {
-      if(Math.floor(Date.now()/50)%2===0) ctx.globalAlpha = 0.5;
+    ctx.save();
+    if(en.type === 'bomber' && en.fuse > 0) { if(Math.floor(Date.now()/50)%2===0) ctx.globalAlpha = 0.5; }
+    if(en.type === 'assassin' && en.dashTime > 0) { ctx.globalAlpha = 0.3; }
+    if(en.type === 'void_lord' && en.dashTime > 0) { ctx.globalAlpha = 0.5; }
+    
+    let drawY = en.y;
+    if(en.type === 'ghost') { ctx.globalAlpha = 0.6; }
+    
+    if (en.type === 'sniper' && en.shootCd < 1.0) {
+        ctx.strokeStyle = `rgba(255, 0, 0, ${1 - en.shootCd})`;
+        ctx.lineWidth = 1; ctx.beginPath();
+        ctx.moveTo(en.x, en.y - 26); ctx.lineTo(en.x + facing * 1000, en.y - 26);
+        ctx.stroke();
     }
     
-    drawFigure(en.x, en.y, facing===0?1:facing, en.walkPhase, pal, en.type==='gunslinger', false, en.scale);
-    ctx.globalAlpha = 1.0;
+    drawFigure(en.x, drawY, facing===0?1:facing, en.walkPhase, pal, en.type==='gunslinger'||en.type==='sniper', false, en.scale);
+    ctx.restore();
 
-    const hpBarY = en.y - (45 * en.scale), hpBarW = 30 * en.scale;
+    const hpBarY = drawY - (45 * en.scale), hpBarW = 30 * en.scale;
+    const isBoss = (en.type === 'boss' || en.type === 'necromancer' || en.type === 'inferno' || en.type === 'void_lord' || en.type === 'dragon');
     ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(en.x-(hpBarW/2)-1, hpBarY-1, hpBarW+2, 5);
-    ctx.fillStyle = en.type === 'boss' ? '#ff0000' : (en.type==='grunt' || en.type==='bomber' ? '#c94a2a':'#8a2a8a');
+    ctx.fillStyle = isBoss ? '#ff0000' : (en.type==='grunt'||en.type==='bomber'||en.type==='tank'||en.type==='dummy' ? '#c94a2a':'#8a2a8a');
     ctx.fillRect(en.x-(hpBarW/2), hpBarY, hpBarW*(en.hp/en.maxHp), 3);
     
-    if(en.type === 'boss'){
+    if(isBoss){
       ctx.fillStyle='#fff'; ctx.font='bold 10px monospace'; ctx.fillText(`LV.${en.bossLevel}`, en.x-(hpBarW/2), hpBarY-4);
     }
   }
@@ -718,33 +1088,48 @@ function stepEntityVertical(entity, dt){
 
 function updatePlayer(dt){
   if(!player.alive) return;
-  const speed = player.speed || 250; let moving = false;
+  let speed = player.speed || 250; let moving = false;
   
+  if (isPractice && gameState === 'playing' && !player.reloading && !player.isDashing) {
+      if (keys['Digit1']) { shopStats.gunTier.level = 0; syncStats(); player.ammo = player.maxAmmo; }
+      if (keys['Digit2']) { shopStats.gunTier.level = 1; syncStats(); player.ammo = player.maxAmmo; }
+      if (keys['Digit3']) { shopStats.gunTier.level = 2; syncStats(); player.ammo = player.maxAmmo; }
+      if (keys['Digit4']) { shopStats.gunTier.level = 3; syncStats(); player.ammo = player.maxAmmo; }
+      if (keys['Digit5']) { shopStats.gunTier.level = 4; syncStats(); player.ammo = player.maxAmmo; }
+      if (keys['Digit6']) { shopStats.gunTier.level = 5; syncStats(); player.ammo = player.maxAmmo; }
+      if (keys['Escape'] && !escPressedLast) { isPractice = false; gameState = 'title'; }
+  }
+
   player.shootCd -= dt; player.invuln -= dt; player.dynaCd -= dt; player.dashCd -= dt;
   
-  // DASH LOGIC
+  if(player.frenzyTimer > 0) {
+      player.frenzyTimer -= dt;
+      player.shootCd -= dt * 1.5; 
+      player.ammo = player.maxAmmo; 
+      speed *= 0.8; 
+  }
+  
+  if(difficultyMode === 'hell' || isPractice){
+      player.ammo = player.maxAmmo;
+  }
+  
   if (player.isDashing) {
-      player.dashTime -= dt;
-      player.vy = 0;
-      player.vx = player.facing * 900; // 대시 스피드
-      spawnParticles(player.x, player.y - 15, 2, ['#ffffff', '#00ffff'], 30, 0.2, 3); // 대시 궤적
+      player.dashTime -= dt; player.vy = 0; player.vx = player.facing * 900; 
+      spawnParticles(player.x, player.y - 15, 2, ['#ffffff', '#00ffff'], 30, 0.2, 3); 
       if (player.dashTime <= 0) { player.isDashing = false; }
   } else {
       let touchingRope = null;
       for(const r of ropes){
         if(Math.abs(player.x - r.x) < 14 && player.y > r.y - 5 && player.y - player.h < r.y + r.h){ touchingRope = r; break; }
       }
+      if(touchingRope){ if((keys[actionKeys.jump] || keys[actionKeys.down]) && !player.climbing){ player.climbing = true; player.vx = 0; player.vy = 0; player.x = touchingRope.x; } } else { player.climbing = false; }
 
-      if(touchingRope){
-        if((keys[actionKeys.jump] || keys[actionKeys.down]) && !player.climbing){ player.climbing = true; player.vx = 0; player.vy = 0; player.x = touchingRope.x; }
-      } else { player.climbing = false; }
-
-      const maxJ = (unlockedItems[5] || player.classId === 1) ? 2 : 1; 
+      const maxJ = (unlockedItems[7] || player.classId === 1) ? 2 : 1; 
 
       if(player.climbing){
         player.vy = 0; player.vx = 0; player.jumpCount = 0;
-        if(keys[actionKeys.jump]){ player.y -= 250*0.7*dt; player.walkPhase += dt*15; moving=true; }
-        if(keys[actionKeys.down]){ player.y += 250*0.7*dt; player.walkPhase += dt*15; moving=true; }
+        if(keys[actionKeys.jump]){ player.y -= speed*0.7*dt; player.walkPhase += dt*15; moving=true; }
+        if(keys[actionKeys.down]){ player.y += speed*0.7*dt; player.walkPhase += dt*15; moving=true; }
         if(keys[actionKeys.left] || keys[actionKeys.right]){ player.climbing = false; }
         if(player.y > touchingRope.y+touchingRope.h){ player.y = touchingRope.y+touchingRope.h; player.climbing=false; }
         if(player.y < touchingRope.y){ player.y = touchingRope.y; } 
@@ -754,60 +1139,88 @@ function updatePlayer(dt){
         else player.vx = 0;
 
         if(keys[actionKeys.jump] && !jumpPressedLast){
-          if(player.jumpCount < maxJ){
-            player.vy = -600; player.jumpCount++; player.onGround = false;
-            spawnParticles(player.x, player.y-1, 6, ['#d8c8a0','#b09468'],90,0.35,3); playSnd('jump');
-          }
+          if(player.jumpCount < maxJ){ player.vy = -600; player.jumpCount++; player.onGround = false; spawnParticles(player.x, player.y-1, 6, ['#d8c8a0','#b09468'],90,0.35,3); playSnd('jump'); }
         }
-        
-        // DASH INPUT TRIGGER
         if(keys[actionKeys.dash] && player.dashCd <= 0){
-            player.isDashing = true; player.dashTime = 0.15; player.dashCd = 1.2;
-            playSnd('dash'); addShake(3);
+            player.isDashing = true; player.dashTime = 0.15; player.dashCd = 1.2; playSnd('dash'); addShake(3);
         }
       }
   }
 
-  player.x += player.vx*dt; player.x = clamp(player.x, 7, WORLD_W-7);
-  stepEntityVertical(player, dt);
+  player.x += player.vx*dt; player.x = clamp(player.x, 7, WORLD_W-7); stepEntityVertical(player, dt);
 
   if(!player.isDashing){
-      if(moving && player.onGround && !player.climbing) player.walkPhase += dt*12;
-      else if(!player.onGround && !player.climbing) player.walkPhase = 0;
+      if(moving && player.onGround && !player.climbing) player.walkPhase += dt*12; else if(!player.onGround && !player.climbing) player.walkPhase = 0;
   }
-
   if(player.reloading){ player.reloadTimer -= dt; if(player.reloadTimer<=0){ player.reloading=false; player.ammo = player.maxAmmo; } }
-  if(keys[actionKeys.reload] && !player.reloading && player.ammo<player.maxAmmo){ player.reloading = true; player.reloadTimer = player.reloadTime; }
+  if(keys[actionKeys.reload] && !player.reloading && player.ammo<player.maxAmmo && difficultyMode !== 'hell' && !isPractice){ player.reloading = true; player.reloadTimer = player.reloadTime; }
 
   const gunX = player.x + player.facing*16; const gunY = player.y - 26;
   if(keys[actionKeys.shoot] && player.shootCd<=0 && !player.reloading && !player.climbing && !player.isDashing){
-    if(player.ammo>0){
-      player.ammo--; player.shootCd = player.shootCdMax;
+    if(player.ammo>0 || difficultyMode === 'hell' || isPractice){
+      if(difficultyMode !== 'hell' && !isPractice) player.ammo--; 
+      player.shootCd = player.shootCdMax;
+      
       let tier = shopStats.gunTier.level; let bSpeed = 800; 
-      if (tier === 0) { spawnBullet(gunX, gunY, player.facing*bSpeed, 0, 'player', 1.5); } 
-      else if (tier === 1) { spawnBullet(gunX, gunY - 4, player.facing*bSpeed, 0, 'player', 1.5); spawnBullet(gunX, gunY + 4, player.facing*bSpeed, 0, 'player', 1.5); } 
-      else if (tier === 2) { spawnBullet(gunX, gunY, player.facing*bSpeed, 0, 'player', 1.2); spawnBullet(gunX, gunY, player.facing*bSpeed*0.9, -150, 'player', 1.2); spawnBullet(gunX, gunY, player.facing*bSpeed*0.9, 150, 'player', 1.2); } 
-      else if (tier === 3) { spawnBullet(gunX, gunY + rand(-3,3), player.facing*bSpeed, rand(-40,40), 'player', 1.5); }
-      spawnParticles(gunX+player.facing*2, gunY, 7, ['#ffe27a','#ffb347','#fff2c2'], 200, 0.18, 3); addShake(tier === 2 ? 6 : 2); playSnd('shoot');
-      if(player.ammo<=0){ player.reloading = true; player.reloadTimer = player.reloadTime; }
+      let bType = player.classId === 3 ? 'lightning' : 'normal';
+      let bSpeedMod = player.classId === 3 ? 1.5 : 1.0;
+      let pColors = player.classId === 3 ? ['#00ffff','#00aaff','#ffffff'] : ['#ffe27a','#ffb347','#fff2c2'];
+      
+      if(difficultyMode === 'hell'){
+          bType = 'hellfire';
+          player.shootCd = 0.15;
+          spawnBullet(gunX, gunY + rand(-3,3), player.facing*1100, rand(-30,30), 'player', 2.0, 0, bType);
+          spawnParticles(gunX+player.facing*5, gunY, 12, ['#ff0000','#ffaa00','#ffff00'], 350, 0.25, 4); 
+          addShake(4); playSnd('shoot');
+      } else {
+          if (tier === 0) { spawnBullet(gunX, gunY, player.facing*bSpeed*bSpeedMod, 0, 'player', 1.5, 0, bType); } 
+          else if (tier === 1) { 
+              spawnBullet(gunX, gunY - 4, player.facing*bSpeed*bSpeedMod, 0, 'player', 1.5, 0, bType); 
+              spawnBullet(gunX, gunY + 4, player.facing*bSpeed*bSpeedMod, 0, 'player', 1.5, 0, bType); 
+          } 
+          else if (tier === 2) { 
+              spawnBullet(gunX, gunY, player.facing*bSpeed*bSpeedMod, 0, 'player', 1.2, 0, bType); 
+              spawnBullet(gunX, gunY, player.facing*bSpeed*0.95*bSpeedMod, -40, 'player', 1.2, 0, bType); 
+              spawnBullet(gunX, gunY, player.facing*bSpeed*0.95*bSpeedMod, 40, 'player', 1.2, 0, bType); 
+              spawnBullet(gunX, gunY, player.facing*bSpeed*0.9*bSpeedMod, -80, 'player', 1.2, 0, bType); 
+              spawnBullet(gunX, gunY, player.facing*bSpeed*0.9*bSpeedMod, 80, 'player', 1.2, 0, bType); 
+          } 
+          else if (tier === 3) { 
+              spawnBullet(gunX, gunY + rand(-3,3), player.facing*bSpeed*bSpeedMod, rand(-40,40), 'player', 1.5, 0, bType); 
+          }
+          else if (tier === 4) {
+              let sType = bType === 'lightning' ? 'lightning' : 'sniper_player';
+              spawnBullet(gunX, gunY, player.facing*bSpeed*2.5*bSpeedMod, 0, 'player', 1.5, 0, sType); 
+          }
+          else if (tier === 5) {
+              let pType = bType === 'lightning' ? 'lightning' : 'plasma_player';
+              spawnBullet(gunX, gunY, player.facing*bSpeed*1.2*bSpeedMod, 0, 'player', 1.5, 0, pType); 
+          }
+
+          if (tier === 0 || tier === 1 || tier === 2 || tier === 3) {
+              spawnParticles(gunX+player.facing*2, gunY, 7, pColors, 200, 0.18, 3); addShake(tier === 2 ? 6 : 2); playSnd('shoot');
+          } else if (tier === 4) {
+              spawnParticles(gunX+player.facing*2, gunY, 15, pColors, 400, 0.3, 4); addShake(10); playSnd('shoot');
+          } else if (tier === 5) {
+              spawnParticles(gunX+player.facing*2, gunY, 12, ['#00ffaa','#ffffff'], 250, 0.25, 4); addShake(5); playSnd('exp');
+          }
+      }
+      
+      if(player.ammo<=0 && difficultyMode !== 'hell' && !isPractice){ player.reloading = true; player.reloadTimer = player.reloadTime; }
     } else if(!player.reloading){ player.reloading = true; player.reloadTimer = player.reloadTime; }
   }
   
-  if(unlockedItems[4] && keys[actionKeys.item] && player.dynaCd <= 0 && !player.isDashing){
+  if((unlockedItems[6] || isPractice) && keys[actionKeys.item] && player.dynaCd <= 0 && !player.isDashing){
     spawnDynamite(player.x, player.y - 20, player.facing * 400, -300, 'player');
     player.dynaCd = 5.0; playSnd('jump');
   }
-
   const bDown = !!keys[actionKeys.shop]; if(bDown && !bPressedLast && player.onGround && !player.climbing){ gameState = 'shop'; } bPressedLast = bDown;
 }
 
 function drawPlayer(){
   if(!player.alive) return;
   if(player.invuln>0 && Math.floor(player.invuln*20)%2===0) return;
-  
-  if (player.isDashing) {
-      ctx.globalAlpha = 0.6; // 대시 중 무적 연출 효과
-  }
+  if (player.isDashing) { ctx.globalAlpha = 0.6; }
   
   const aiming = keys[actionKeys.shoot] && player.shootCd > player.shootCdMax*0.6 && !player.reloading && !player.isDashing;
   drawFigure(player.x, player.y, player.facing, player.walkPhase, SKINS_PAL[equippedSkin], aiming, (!player.onGround && !player.climbing) || player.isDashing, 1, player.climbing);
@@ -815,31 +1228,73 @@ function drawPlayer(){
 }
 
 function updateSpawning(dt){
-  if(comboTimer > 0) {
-     comboTimer -= dt;
-     if(comboTimer <= 0) combo = 0;
+  if(comboTimer > 0) { comboTimer -= dt; if(comboTimer <= 0) combo = 0; }
+  
+  if (isPractice) return;
+
+  if (difficultyMode === 'nightmare' || difficultyMode === 'hell') {
+      nightmareTimer -= dt;
+      if (nightmareTimer <= 0) {
+          startWave(); 
+          nightmareTimer = difficultyMode === 'hell' ? 25.0 : 30.0;
+      }
   }
-  if(enemies.length===0 && waveEnemiesToSpawn===0){ waveBreakTimer -= dt; if(waveBreakTimer<=0){ startWave(); waveBreakTimer = 3.0; } return; }
+
+  if(enemies.length===0 && waveEnemiesToSpawn===0){ 
+      waveBreakTimer -= dt; 
+      if(waveBreakTimer<=0){ 
+          startWave(); 
+          waveBreakTimer = difficultyMode === 'hell' ? 1.5 : 3.0; 
+          if(difficultyMode === 'nightmare' || difficultyMode === 'hell') {
+              nightmareTimer = difficultyMode === 'hell' ? 25.0 : 30.0;
+          }
+      } 
+      return; 
+  }
+  
   if(waveEnemiesToSpawn>0){ 
     spawnTimer -= dt; 
     if(spawnTimer<=0){ 
       let r = Math.random();
       let eType = 'grunt';
-      let bomberChance = difficultyMode === 'nightmare' ? 0.25 : 0.15;
-      if (r < bomberChance) eType = 'bomber';
-      else if (r < 0.6) eType = 'gunslinger';
+      
+      if (difficultyMode === 'hell') {
+         if (r < 0.2) eType = 'bomber';
+         else if (r < 0.4) eType = 'demon'; 
+         else if (r < 0.55) eType = 'assassin';
+         else if (r < 0.7) eType = 'sniper';
+         else if (r < 0.85) eType = 'tank';
+         else eType = 'ghost';
+      }
+      else if (difficultyMode === 'nightmare') {
+         if (r < 0.15) eType = 'bomber';
+         else if (r < 0.3) eType = 'cultist';
+         else if (r < 0.45) eType = 'ghost';
+         else if (r < 0.6) eType = 'gunslinger';
+         else if (r < 0.7) eType = 'assassin';
+         else if (r < 0.8) eType = 'sniper';
+         else if (r < 0.95) eType = 'tank';
+      } else {
+         let bomberChance = difficultyMode === 'hard' ? 0.2 : 0.1;
+         if (r < bomberChance) eType = 'bomber';
+         else if (r < 0.35) eType = 'gunslinger';
+         else if (r < 0.55 && waveNum > 1) eType = 'sniper'; 
+         else if (r < 0.70 && waveNum > 2) eType = 'assassin';
+         else if (r < 0.85 && waveNum > 3) eType = 'tank';
+      }
       
       enemies.push(makeEnemy(eType)); waveEnemiesToSpawn--; 
       let spawnDelay = rand(0.6, 1.2);
       if (difficultyMode === 'hard') spawnDelay /= 1.5;
       if (difficultyMode === 'nightmare') spawnDelay /= 2.5;
+      if (difficultyMode === 'hell') spawnDelay /= 3.5;
       spawnTimer = spawnDelay;
     } 
   }
 }
 
 // ---------------------------------------------------------------
-// UI MENUS (Settings, Difficulty, Lobby)
+// UI MENUS
 // ---------------------------------------------------------------
 let settingsCursor = 0; let waitingForKey = false;
 function drawSettings(){
@@ -869,73 +1324,40 @@ const LOBBY_ITEMS = [
   {type:'gun', id:1, name:'TWIN GUN', cost:500, desc:'위아래 두 발'},
   {type:'gun', id:2, name:'SHOTGUN', cost:1500, desc:'산탄 발사'},
   {type:'gun', id:3, name:'MINIGUN', cost:3000, desc:'빠른 연사'},
-  {type:'skill', id:4, name:'DYNAMITE', cost:5000, desc:'[Q] 투척 (쿨 5s)'},
-  {type:'skill', id:5, name:'DOUBLE JUMP', cost:10000, desc:'이단 점프 패시브'},
-  {type:'skin', id:6, name:'CLASS: SHERIFF', cost:0, desc:'골드 획득 15% 증가', skinIdx:0},
-  {type:'skin', id:7, name:'CLASS: BANDIT', cost:10000, desc:'이속 상승, 기본2단점프 (피해증가)', skinIdx:1},
-  {type:'skin', id:8, name:'CLASS: CYBORG', cost:10000, desc:'체력 대폭증가, 맷집강화 (이속감소)', skinIdx:2}
+  {type:'gun', id:4, name:'SNIPER', cost:6000, desc:'초고속 정밀관통'},
+  {type:'gun', id:5, name:'PLASMA', cost:10000, desc:'강력한 폭발구'},
+  {type:'skill', id:6, name:'DYNAMITE', cost:5000, desc:'[Q] 투척 (쿨 5s)'},
+  {type:'skill', id:7, name:'DOUBLE JUMP', cost:10000, desc:'이단 점프 패시브'},
+  {type:'skin', id:8, name:'CLASS: SHERIFF', cost:0, desc:'골드 획득 15% 증가', skinIdx:0},
+  {type:'skin', id:9, name:'CLASS: BANDIT', cost:10000, desc:'이속상승 2단점프', skinIdx:1},
+  {type:'skin', id:10, name:'CLASS: CYBORG', cost:10000, desc:'체력 대폭증가', skinIdx:2},
+  {type:'skin', id:11, name:'STORMBRINGER', cost:15000, desc:'관통 번개 마법사', skinIdx:3}
 ];
 let lobbyCursor = 0;
-
 function drawLobbyShop(){
-  ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H);
-  ctx.textAlign='center'; ctx.fillStyle='#ffcf6a'; ctx.font='bold 40px monospace'; ctx.fillText('LOBBY (WEAPONS & CLASSES)', W/2, 60);
-  ctx.fillStyle='#ffd700'; ctx.font='bold 20px monospace'; ctx.fillText(`GLOBAL COINS: ${globalCoins}`, W/2, 95);
-  ctx.fillStyle='#ffe27a'; ctx.font='14px monospace'; ctx.fillText('W/A/S/D 선택 | SPACE 구매/장착 | B 뒤로가기', W/2, 120);
-  
-  for(let i=0; i<9; i++){
-    let col = i % 3; let row = Math.floor(i / 3);
-    let bx = W/2 - 340 + col*230; let by = 145 + row*120; let bw=220, bh=110;
-    
-    if(lobbyCursor === i){
-      ctx.strokeStyle='#ff6a2a'; ctx.lineWidth=6; ctx.strokeRect(bx-5, by-5, bw+10, bh+10);
-      ctx.fillStyle='rgba(255,100,40,0.2)'; ctx.fillRect(bx, by, bw, bh);
-    }
+  ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H); ctx.textAlign='center'; ctx.fillStyle='#ffcf6a'; ctx.font='bold 40px monospace'; ctx.fillText('LOBBY (WEAPONS & CLASSES)', W/2, 60);
+  ctx.fillStyle='#ffd700'; ctx.font='bold 20px monospace'; ctx.fillText(`GLOBAL COINS: ${globalCoins}`, W/2, 95); ctx.fillStyle='#ffe27a'; ctx.font='14px monospace'; ctx.fillText('W/A/S/D 선택 | SPACE 구매/장착 | B 뒤로가기', W/2, 120);
+  for(let i=0; i<12; i++){
+    let col = i % 4; let row = Math.floor(i / 4); let bx = 35 + col*225; let by = 135 + row*120; let bw=215, bh=110;
+    if(lobbyCursor === i){ ctx.strokeStyle='#ff6a2a'; ctx.lineWidth=6; ctx.strokeRect(bx-5, by-5, bw+10, bh+10); ctx.fillStyle='rgba(255,100,40,0.2)'; ctx.fillRect(bx, by, bw, bh); }
     ctx.strokeStyle='#5c3d22'; ctx.lineWidth=4; ctx.strokeRect(bx, by, bw, bh); ctx.fillStyle='#1a1004'; ctx.fillRect(bx, by, bw, bh);
-    
-    let it = LOBBY_ITEMS[i];
-    ctx.fillStyle = (it.id===0 || it.id===6) ? '#ffb347' : '#ff3a3a'; 
-    if(it.type === 'skin') ctx.fillStyle = '#6ad1ff';
-    ctx.font='bold 16px monospace'; ctx.fillText(it.name, bx+bw/2, by+30);
-    ctx.fillStyle = '#d8c8a0'; ctx.font='11px monospace'; ctx.fillText(it.desc, bx+bw/2, by+55);
-    
+    let it = LOBBY_ITEMS[i]; ctx.fillStyle = (it.type==='gun') ? '#ffb347' : '#ff3a3a'; if(it.type === 'skin') ctx.fillStyle = '#6ad1ff';
+    ctx.font='bold 16px monospace'; ctx.fillText(it.name, bx+bw/2, by+30); ctx.fillStyle = '#d8c8a0'; ctx.font='11px monospace'; ctx.fillText(it.desc, bx+bw/2, by+55);
     if(unlockedItems[it.id]){
-      if((it.type==='gun' && equippedGun===it.id) || (it.type==='skin' && equippedSkin===it.skinIdx)){
-        ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('EQUIPPED', bx+bw/2, by+85);
-      } else if(it.type==='skill') {
-        ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+85);
-      } else {
-        ctx.fillStyle='#fff'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+80);
-        ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Equip', bx+bw/2, by+98);
-      }
-    } else {
-      ctx.fillStyle = globalCoins >= it.cost ? '#00ff00' : '#ff0000'; ctx.font='bold 16px monospace'; ctx.fillText(`COST: ${it.cost}`, bx+bw/2, by+80);
-      ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Buy', bx+bw/2, by+98);
-    }
-  }
-  ctx.textAlign='left';
+      if((it.type==='gun' && equippedGun===it.id) || (it.type==='skin' && equippedSkin===it.skinIdx)){ ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('EQUIPPED', bx+bw/2, by+85); } else if(it.type==='skill') { ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+85); } else { ctx.fillStyle='#fff'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+80); ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Equip', bx+bw/2, by+98); }
+    } else { ctx.fillStyle = globalCoins >= it.cost ? '#00ff00' : '#ff0000'; ctx.font='bold 16px monospace'; ctx.fillText(`COST: ${it.cost}`, bx+bw/2, by+80); ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Buy', bx+bw/2, by+98); }
+  } ctx.textAlign='left';
 }
-
 function handleLobbyShopInput(){
-  if(keys['KeyA'] && !keyLeftLast) lobbyCursor = Math.max(0, lobbyCursor-1);
-  if(keys['KeyD'] && !keyRightLast) lobbyCursor = Math.min(8, lobbyCursor+1);
-  if(keys['KeyW'] && !keyUpLast) lobbyCursor = Math.max(0, lobbyCursor-3);
-  if(keys['KeyS'] && !keyDownLast) lobbyCursor = Math.min(8, lobbyCursor+3);
+  if(keys['KeyA'] && !keyLeftLast) lobbyCursor = Math.max(0, lobbyCursor-1); 
+  if(keys['KeyD'] && !keyRightLast) lobbyCursor = Math.min(11, lobbyCursor+1);
+  if(keys['KeyW'] && !keyUpLast) lobbyCursor = Math.max(0, lobbyCursor-4); 
+  if(keys['KeyS'] && !keyDownLast) lobbyCursor = Math.min(11, lobbyCursor+4);
   
   if(keys['Space'] && !spacePressedLast){
     let it = LOBBY_ITEMS[lobbyCursor];
-    if(unlockedItems[it.id]){
-      if(it.type==='gun') equippedGun = it.id;
-      if(it.type==='skin') equippedSkin = it.skinIdx;
-      saveGlobal(); playSnd('coin');
-    } else {
-      if(globalCoins >= it.cost){
-        globalCoins -= it.cost; unlockedItems[it.id] = true;
-        if(it.type==='gun') equippedGun = it.id;
-        if(it.type==='skin') equippedSkin = it.skinIdx;
-        saveGlobal(); playSnd('coin');
-      } else { playSnd('hit'); }
-    }
+    if(unlockedItems[it.id]){ if(it.type==='gun') equippedGun = it.id; if(it.type==='skin') equippedSkin = it.skinIdx; saveGlobal(); playSnd('coin');
+    } else { if(globalCoins >= it.cost){ globalCoins -= it.cost; unlockedItems[it.id] = true; if(it.type==='gun') equippedGun = it.id; if(it.type==='skin') equippedSkin = it.skinIdx; saveGlobal(); playSnd('coin'); } else { playSnd('hit'); } }
     spacePressedLast = true;
   }
   if(keys['KeyB'] && !bPressedLast){ gameState = 'title'; bPressedLast = true; }
@@ -943,22 +1365,16 @@ function handleLobbyShopInput(){
 
 let mapCursor = 0;
 function drawDiffSelect(){
-  ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H);
-  ctx.textAlign='center'; ctx.fillStyle='#ff3a2a'; ctx.font='bold 40px monospace'; ctx.fillText('SELECT DIFFICULTY', W/2, 120);
+  ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H); ctx.textAlign='center'; ctx.fillStyle='#ff3a2a'; ctx.font='bold 40px monospace'; ctx.fillText('SELECT DIFFICULTY', W/2, 120);
   ctx.fillStyle='#ffe27a'; ctx.font='14px monospace'; ctx.fillText('A / D 로 선택, SPACE 로 결정', W/2, 160);
-  
-  const modes = ['NORMAL', 'HARD', 'NIGHTMARE'];
-  for(let i=0; i<3; i++){
-    let bx = W/2 - 350 + i*240;
-    if(mapCursor === i){
-      ctx.strokeStyle='#ff6a2a'; ctx.lineWidth=6; ctx.strokeRect(bx-5, 220-5, 200+10, 100+10);
-      ctx.fillStyle='rgba(255,100,40,0.2)'; ctx.fillRect(bx, 220, 200, 100);
-    }
+  const modes = ['NORMAL', 'HARD', 'NIGHTMARE', 'HELL'];
+  for(let i=0; i<4; i++){
+    let bx = W/2 - 460 + i*235;
+    if(mapCursor === i){ ctx.strokeStyle='#ff6a2a'; ctx.lineWidth=6; ctx.strokeRect(bx-5, 220-5, 200+10, 100+10); ctx.fillStyle='rgba(255,100,40,0.2)'; ctx.fillRect(bx, 220, 200, 100); }
     ctx.strokeStyle='#5c3d22'; ctx.lineWidth=4; ctx.strokeRect(bx, 220, 200, 100); ctx.fillStyle='#1a1004'; ctx.fillRect(bx, 220, 200, 100);
-    ctx.fillStyle = (i===0) ? '#ffb347' : (i===1 ? '#ff3a3a' : '#c300ff'); ctx.font='bold 24px monospace';
-    ctx.fillText(modes[i], bx+100, 280);
-  }
-  ctx.textAlign='left';
+    ctx.fillStyle = (i===0) ? '#ffb347' : (i===1 ? '#ff3a3a' : (i===2 ? '#c300ff' : '#ff0000')); 
+    ctx.font='bold 24px monospace'; ctx.fillText(modes[i], bx+100, 280);
+  } ctx.textAlign='left';
 }
 
 function drawMapSelect(){
@@ -969,16 +1385,18 @@ function drawMapSelect(){
     if(mapCursor === i){ ctx.strokeStyle='#ff6a2a'; ctx.lineWidth=6; ctx.strokeRect(bx-5, 180-5, 200+10, 150+10); ctx.fillStyle='rgba(255,100,40,0.2)'; ctx.fillRect(bx, 180, 200, 150); }
     ctx.strokeStyle='#5c3d22'; ctx.lineWidth=4; ctx.strokeRect(bx, 180, 200, 150); ctx.fillStyle='#1a1004'; ctx.fillRect(bx, 180, 200, 150);
     ctx.fillStyle='#ffb347'; ctx.font='bold 16px monospace'; ctx.fillText('STAGE '+(i+1), bx+100, 240); ctx.fillStyle='#d8c8a0'; ctx.font='14px monospace'; ctx.fillText(STAGES[i].name, bx+100, 270);
-  }
-  ctx.textAlign='left';
+  } ctx.textAlign='left';
 }
 
 function drawShop(){
   ctx.fillStyle='rgba(10,5,0,0.85)'; ctx.fillRect(0,0,W,H); ctx.textAlign='center'; ctx.fillStyle='#ffcf6a'; ctx.font='bold 36px monospace'; ctx.fillText('BLACK MARKET (IN-GAME)', W/2, 60);
   ctx.fillStyle='#ffd700'; ctx.font='bold 20px monospace'; ctx.fillText('YOUR GOLD: '+gold, W/2, 95);
-  const gunNames = ['REVOLVER', 'TWIN GUN', 'SHOTGUN', 'MINIGUN'];
+  const gunNames = ['REVOLVER', 'TWIN GUN', 'SHOTGUN', 'MINIGUN', 'SNIPER', 'PLASMA'];
+  
+  let gunText = difficultyMode === 'hell' ? 'HELLFIRE (MAX)' : `${gunNames[shopStats.gunTier.level]} > ${shopStats.gunTier.level<5 ? gunNames[shopStats.gunTier.level+1] : 'MAX'}`;
+  
   const itemsList = [
-    {key:'1', title:'GUN UPGRADE', stat:shopStats.gunTier, text:`${gunNames[shopStats.gunTier.level]} > ${shopStats.gunTier.level<3 ? gunNames[shopStats.gunTier.level+1] : 'MAX'}`},
+    {key:'1', title:'GUN UPGRADE', stat:shopStats.gunTier, text:gunText},
     {key:'2', title:'DAMAGE UP', stat:shopStats.dmg, text:`Lv.${shopStats.dmg.level}/${shopStats.dmg.max}`},
     {key:'3', title:'MAX AMMO', stat:shopStats.ammo, text:`Lv.${shopStats.ammo.level}/${shopStats.ammo.max}`},
     {key:'4', title:'RELOAD SPD', stat:shopStats.reload, text:`Lv.${shopStats.reload.level}/${shopStats.reload.max}`},
@@ -992,7 +1410,10 @@ function drawShop(){
     ctx.strokeStyle='#8a5a34'; ctx.lineWidth=4; ctx.strokeRect(bx, by, bw, bh); ctx.fillStyle='#1a1004'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle='#ffb347'; ctx.font='bold 16px monospace'; ctx.fillText(`[${itemsList[i].key}] ${itemsList[i].title}`, bx+bw/2, by+35);
     ctx.fillStyle='#fff'; ctx.font='14px monospace'; ctx.fillText(itemsList[i].text, bx+bw/2, by+70);
-    if(itemsList[i].stat === shopStats.heal) {
+    
+    if (i===0 && difficultyMode === 'hell') {
+        ctx.fillStyle = '#ff0000'; ctx.fillText('HELL MODE LOCKED', bx+bw/2, by+105);
+    } else if(itemsList[i].stat === shopStats.heal) {
       if (player.hp >= player.maxHp) { ctx.fillStyle = '#888'; ctx.fillText('HP FULL', bx+bw/2, by+105); } else { ctx.fillStyle = gold >= itemsList[i].stat.cost ? '#00ff00' : '#ff0000'; ctx.fillText(`COST: ${itemsList[i].stat.cost} G`, bx+bw/2, by+105); }
     } else {
       if(itemsList[i].stat.level < itemsList[i].stat.max) { let cost = itemsList[i].stat.costs ? itemsList[i].stat.costs[itemsList[i].stat.level] : itemsList[i].stat.cost; ctx.fillStyle = gold >= cost ? '#00ff00' : '#ff0000'; ctx.fillText(`COST: ${cost} G`, bx+bw/2, by+105); } 
@@ -1004,7 +1425,6 @@ function drawShop(){
 
 function handleShopInput(){
   const bDown = !!keys[actionKeys.shop]; if(bDown && !bPressedLast){ gameState = 'playing'; } bPressedLast = bDown;
-  
   function tryBuy(stat){
     let cost = stat.costs ? stat.costs[stat.level] : stat.cost;
     if(stat.level < stat.max && gold >= cost){
@@ -1016,16 +1436,16 @@ function handleShopInput(){
     }
   }
   
-  // Debounce logic: 처리 후 keys를 false로 두어 키를 뗐다 다시 눌러야 적용되게 만듦 (버그 픽스)
-  if(keys['Digit1']) { tryBuy(shopStats.gunTier); keys['Digit1'] = false; } 
+  if(keys['Digit1']) { if (difficultyMode !== 'hell') tryBuy(shopStats.gunTier); keys['Digit1'] = false; } 
   if(keys['Digit2']) { tryBuy(shopStats.dmg); keys['Digit2'] = false; }
-  if(keys['Digit3']) { tryBuy(shopStats.ammo); keys['Digit3'] = false; } 
-  if(keys['Digit4']) { tryBuy(shopStats.reload); keys['Digit4'] = false; }
-  if(keys['Digit5']) { tryBuy(shopStats.maxHp); keys['Digit5'] = false; } 
-  if(keys['Digit6']) { tryBuy(shopStats.armor); keys['Digit6'] = false; }
+  if(keys['Digit3']) { tryBuy(shopStats.ammo); keys['Digit3'] = false; } if(keys['Digit4']) { tryBuy(shopStats.reload); keys['Digit4'] = false; }
+  if(keys['Digit5']) { tryBuy(shopStats.maxHp); keys['Digit5'] = false; } if(keys['Digit6']) { tryBuy(shopStats.armor); keys['Digit6'] = false; }
   if(keys['Digit7']) { tryBuy(shopStats.speed); keys['Digit7'] = false; }
   if(keys['Digit8']) { 
-    if(player.hp < player.maxHp && gold >= shopStats.heal.cost){ gold -= shopStats.heal.cost; player.hp = Math.min(player.maxHp, player.hp + 50); playSnd('coin'); } 
+    if(player.hp < player.maxHp && gold >= shopStats.heal.cost){ 
+        gold -= shopStats.heal.cost; player.hp = Math.min(player.maxHp, player.hp + 50); playSnd('coin'); 
+        if (difficultyMode === 'nightmare' || difficultyMode === 'hell') shopStats.heal.cost += 15;
+    } 
     keys['Digit8'] = false; 
   }
 }
@@ -1038,38 +1458,49 @@ function drawHUD(){
   ctx.fillStyle='#fff'; ctx.font='bold 12px monospace'; ctx.fillText('HP', 16, 12);
 
   ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(16,48,220,30);
-  for(let i=0;i<player.maxAmmo;i++){
-    const bx = 24 + i* (200/Math.max(10, player.maxAmmo)); 
-    ctx.fillStyle = i<player.ammo ? '#ffd24a' : '#3a3020'; 
-    ctx.fillRect(bx, 56, 4, 14); 
-    ctx.fillStyle = i<player.ammo ? '#b8860b' : '#20180f'; 
-    ctx.fillRect(bx, 56, 4, 4);
+  
+  if (difficultyMode === 'hell') {
+      ctx.fillStyle='#ff0000'; ctx.fillRect(24,56,196,14);
+      ctx.fillStyle='#ffff00'; ctx.font='bold 11px monospace'; ctx.fillText('HELLFIRE (INFINITE)', 28, 67);
+  } else {
+      for(let i=0;i<player.maxAmmo;i++){
+        const bx = 24 + i* (200/Math.max(10, player.maxAmmo)); ctx.fillStyle = i<player.ammo ? '#ffd24a' : '#3a3020'; ctx.fillRect(bx, 56, 4, 14); ctx.fillStyle = i<player.ammo ? '#b8860b' : '#20180f'; ctx.fillRect(bx, 56, 4, 4);
+      }
+      if(player.reloading && !isPractice){ const rProg = 1 - (player.reloadTimer/player.reloadTime); ctx.fillStyle='#1a1a1a'; ctx.fillRect(24,72,196,6); ctx.fillStyle='#6ad1ff'; ctx.fillRect(24,72,196*rProg,6); ctx.fillStyle='#fff'; ctx.font='10px monospace'; ctx.fillText('RELOADING...', 24, 68); }
   }
-  if(player.reloading){ const rProg = 1 - (player.reloadTimer/player.reloadTime); ctx.fillStyle='#1a1a1a'; ctx.fillRect(24,72,196,6); ctx.fillStyle='#6ad1ff'; ctx.fillRect(24,72,196*rProg,6); ctx.fillStyle='#fff'; ctx.font='10px monospace'; ctx.fillText('RELOADING...', 24, 68); }
 
   ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(16, 84, 220, 26); ctx.fillStyle='#fff'; ctx.font='bold 12px monospace';
-  
-  // 다이너마이트 쿨타임
-  if(unlockedItems[4]){
-    if(player.dynaCd <= 0) { ctx.fillStyle='#00ff00'; ctx.fillText('[Q] DYNAMITE', 24, 102); } else { ctx.fillStyle='#aaa'; ctx.fillText(`[Q] CD: ${player.dynaCd.toFixed(1)}s`, 24, 102); }
-  } else { ctx.fillStyle='#555'; ctx.fillText('[Q] LOCKED', 24, 102); }
-  
-  // 대시 쿨타임
+  if(unlockedItems[6] || isPractice){ if(player.dynaCd <= 0) { ctx.fillStyle='#00ff00'; ctx.fillText('[Q] DYNAMITE', 24, 102); } else { ctx.fillStyle='#aaa'; ctx.fillText(`[Q] CD: ${player.dynaCd.toFixed(1)}s`, 24, 102); } } else { ctx.fillStyle='#555'; ctx.fillText('[Q] LOCKED', 24, 102); }
   if(player.dashCd <= 0) { ctx.fillStyle='#00ffff'; ctx.fillText('[SHIFT] DASH', 130, 102); } else { ctx.fillStyle='#aaa'; ctx.fillText(`[SHIFT] CD: ${player.dashCd.toFixed(1)}s`, 130, 102); }
 
-  // Combo UI
-  if(combo > 1){
-     ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(16, 116, 130, 36); 
-     ctx.fillStyle='#ffb347'; ctx.font='bold 22px monospace'; 
-     ctx.fillText(`x${combo} COMBO!`, 24, 142);
-     ctx.fillStyle='#ff3a3a'; ctx.fillRect(16, 152, 130*(comboTimer/3.5), 4);
+  if(combo > 1 && !isPractice){
+     ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(16, 116, 130, 36); ctx.fillStyle='#ffb347'; ctx.font='bold 22px monospace'; ctx.fillText(`x${combo} COMBO!`, 24, 142); ctx.fillStyle='#ff3a3a'; ctx.fillRect(16, 152, 130*(comboTimer/3.5), 4);
+  }
+  
+  if (player.frenzyTimer > 0) {
+      ctx.fillStyle = 'rgba(85, 0, 170, 0.7)'; ctx.fillRect(16, 160, 220, 16);
+      ctx.fillStyle = '#ff00ff'; ctx.fillRect(16, 160, 220 * (player.frenzyTimer / 5.0), 16);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 11px monospace';
+      ctx.fillText('CURSED FRENZY (DMGx2, SPD-20%)', 20, 172);
   }
 
-  ctx.textAlign='right'; ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W-270,16,254,50);
-  ctx.fillStyle='#ffe9c2'; ctx.font='bold 16px monospace'; ctx.fillText('SCORE  '+score, W-24, 36);
-  ctx.fillStyle = (waveNum % 5 === 0) ? '#ff3a3a' : '#ffb347'; ctx.font='bold 13px monospace'; 
-  ctx.fillText('['+difficultyMode.toUpperCase()+'] WAVE '+waveNum+ ((waveNum % 5 === 0) ? ' BOSS' : '') +' · '+STAGES[currentStageIndex].name, W-24, 56);
-  ctx.textAlign='center'; ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W/2-60, 16, 120, 30); ctx.fillStyle='#ffd700'; ctx.font='bold 18px monospace'; ctx.fillText('GOLD: '+gold, W/2, 38); ctx.textAlign='left';
+  ctx.textAlign='right'; ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W-270,16,254,50); ctx.fillStyle='#ffe9c2'; ctx.font='bold 16px monospace'; ctx.fillText('SCORE  '+score, W-24, 36);
+  
+  let stName = (isPractice) ? PRACTICE_STAGE.name : (difficultyMode==='hell'?HELL_STAGE.name:(difficultyMode==='nightmare'?GRAVEYARD_STAGE.name:STAGES[currentStageIndex].name));
+  ctx.fillStyle = (waveNum % 5 === 0 && !isPractice) ? '#ff3a3a' : (difficultyMode==='hell' ? '#ff0000' : (difficultyMode==='nightmare' ? '#c300ff' : '#ffb347')); ctx.font='bold 13px monospace'; 
+  ctx.fillText('['+ (isPractice?'PRACTICE':difficultyMode.toUpperCase()) +'] ' + (isPractice?'':('WAVE '+waveNum+ ((waveNum % 5 === 0) ? ' BOSS' : '') +' · '))+stName, W-24, 56);
+  
+  ctx.textAlign='center'; ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W/2-100, 16, 200, 30); ctx.fillStyle='#ffd700'; ctx.font='bold 18px monospace'; ctx.fillText('GOLD: '+gold, W/2, 38); 
+  
+  if (isPractice) {
+      ctx.fillStyle = '#00ff00'; ctx.font='bold 14px monospace'; 
+      ctx.fillText(`PRACTICE MODE: [1~6] 무기 변경 / [ESC] 타이틀`, W/2, 65);
+  } else if (difficultyMode === 'nightmare' || difficultyMode === 'hell') {
+      ctx.fillStyle = difficultyMode === 'hell' ? '#ff0000' : '#c300ff'; ctx.font='bold 16px monospace'; 
+      ctx.fillText(`NEXT WAVE: ${Math.ceil(nightmareTimer)}s`, W/2, 65);
+  }
+  
+  ctx.textAlign='left';
 }
 
 function drawBanner(){
@@ -1082,7 +1513,7 @@ function drawTitle(){
   ctx.fillStyle='#110905'; ctx.fillRect(0,0,W,H); ctx.textAlign='center'; ctx.fillStyle='#ffcf6a'; ctx.font='bold 64px monospace'; ctx.fillText('PIXEL FORCE', W/2+4, H/2-56); ctx.fillStyle='#ff6a2a'; ctx.fillText('PIXEL FORCE', W/2, H/2-60);
   ctx.fillStyle='#fff2c2'; ctx.font='bold 20px monospace'; ctx.fillText('Wild West Run & Gun (Endless & Classes)', W/2, H/2-10);
   ctx.font='16px monospace'; ctx.fillStyle='#ffe27a'; if(Math.floor(Date.now()/500)%2===0) ctx.fillText('PRESS SPACE TO START', W/2, H/2+40);
-  ctx.fillStyle='#a8862a'; ctx.fillText('PRESS [S] SETTINGS / [L] CLASSES & WEAPONS', W/2, H/2+75); ctx.fillStyle='#ffd700'; ctx.fillText(`GLOBAL COINS: ${globalCoins}`, W/2, H/2+105); ctx.textAlign='left';
+  ctx.fillStyle='#a8862a'; ctx.fillText('PRESS [S] SETTINGS / [L] CLASSES / [P] PRACTICE', W/2, H/2+75); ctx.fillStyle='#ffd700'; ctx.fillText(`GLOBAL COINS: ${globalCoins}`, W/2, H/2+105); ctx.textAlign='left';
 }
 
 function drawGameOver(){
@@ -1098,17 +1529,29 @@ function loop(now){
   const spaceDown = !!keys['Space']; const spaceJustPressed = spaceDown && !spacePressedLast;
   
   if(gameState==='title' || gameState==='gameover'){
-    if(spaceJustPressed) { gameState = 'diff_select'; mapCursor=0; }
+    if(spaceJustPressed) { isPractice=false; gameState = 'diff_select'; mapCursor=0; }
     if(keys['KeyS'] && gameState==='title' && !sPressedLast) { gameState = 'settings'; settingsCursor=0; }
     if(keys['KeyL'] && gameState==='title' && !lPressedLast) { gameState = 'lobby_shop'; lobbyCursor=0; }
+    if(keys['KeyP'] && gameState==='title' && !pPressedLast) {
+        isPractice = true;
+        difficultyMode = 'normal';
+        gameState = 'playing';
+        resetPlayer();
+        score=0; waveNum=0; waveBreakTimer=9999;
+        applyStage(-1);
+    }
   } else if(gameState==='settings'){ handleSettingsInput(); 
   } else if(gameState==='lobby_shop'){ handleLobbyShopInput();
   } else if(gameState === 'diff_select'){
     if(keys['KeyA'] && !keyLeftLast) mapCursor = Math.max(0, mapCursor-1); 
-    if(keys['KeyD'] && !keyRightLast) mapCursor = Math.min(2, mapCursor+1);
+    if(keys['KeyD'] && !keyRightLast) mapCursor = Math.min(3, mapCursor+1);
     if(spaceJustPressed){
-      difficultyMode = (mapCursor === 0) ? 'normal' : ((mapCursor === 1) ? 'hard' : 'nightmare');
-      gameState = 'map_select'; mapCursor = 0;
+      difficultyMode = (mapCursor === 0) ? 'normal' : ((mapCursor === 1) ? 'hard' : (mapCursor === 2 ? 'nightmare' : 'hell'));
+      if (difficultyMode === 'nightmare' || difficultyMode === 'hell') {
+          gameState = 'playing'; resetPlayer(); score=0; waveNum=0; waveBreakTimer=1.2; applyStage(0); 
+      } else {
+          gameState = 'map_select'; mapCursor = 0;
+      }
     }
   } else if(gameState === 'map_select'){
     if(keys['KeyA'] && !keyLeftLast) mapCursor = Math.max(0, mapCursor-1); 
@@ -1125,6 +1568,7 @@ function loop(now){
   
   spacePressedLast = spaceDown; keyLeftLast = !!keys['KeyA']; keyRightLast = !!keys['KeyD']; 
   keyUpLast = !!keys['KeyW']; keyDownLast = !!keys['KeyS']; lPressedLast = !!keys['KeyL']; jumpPressedLast = !!keys[actionKeys.jump]; qPressedLast = !!keys['KeyQ'];
+  pPressedLast = !!keys['KeyP']; escPressedLast = !!keys['Escape'];
 
   render(); requestAnimationFrame(loop);
 }
@@ -1137,6 +1581,14 @@ function render(){
     drawPlatformsAndRopes(); drawProps(); drawItems(); drawDynamites(); drawEnemies(); drawPlayer(); drawBullets(); drawParticles(); drawFloatingTexts();
   }
   ctx.restore();
+
+  if (gameState === 'playing' && player.frenzyTimer > 0) {
+      const grad = ctx.createRadialGradient(W/2, H/2, H/4, W/2, H/2, H);
+      grad.addColorStop(0, 'rgba(85, 0, 170, 0.0)');
+      grad.addColorStop(1, 'rgba(170, 0, 255, 0.25)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+  }
 
   if(gameState==='playing') { drawHUD(); drawBanner(); } 
   else if(gameState==='shop') { drawShop(); } 
