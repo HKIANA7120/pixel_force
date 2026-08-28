@@ -2,20 +2,17 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>PIXEL FORCE - Practice Mode</title>
+<title>PIXEL FORCE - Advanced Mode</title>
 <style>
   html,body{margin:0;padding:0;background:#0a0a0a;overflow:hidden;height:100%;
     display:flex;align-items:center;justify-content:center;font-family:'Courier New',monospace; color:#fff;}
   #wrap{position:relative;box-shadow:0 0 40px rgba(255,50,0,0.25);}
   canvas{display:block;background:#1a1004;image-rendering:pixelated;image-rendering:crisp-edges;}
-  #hint{position:absolute;bottom:-25px;left:0;right:0;text-align:center;color:#caa06a;
-    font-size:13px;letter-spacing:1px;text-shadow:1px 1px 0 #000;pointer-events:none;}
 </style>
 </head>
 <body>
 <div id="wrap">
 <canvas id="game" width="960" height="540"></canvas>
-<div id="hint">이동[W/A/S/D] / 대시[SHIFT] / 사격[SPACE] / 다이너마이트[Q] / 상점[B] / 무기고[L]</div>
 </div>
 <script>
 (function(){
@@ -86,7 +83,7 @@ window.addEventListener('keyup', e=>{ keys[e.code] = false; });
 
 let camera = { x: 0, y: 0 };
 let spacePressedLast = false; let bPressedLast = false; let sPressedLast = false; let lPressedLast = false; let qPressedLast = false;
-let pPressedLast = false; let escPressedLast = false;
+let pPressedLast = false; let escPressedLast = false; let ePressedLast = false;
 let keyLeftLast = false; let keyRightLast = false; let keyUpLast = false; let keyDownLast = false; let jumpPressedLast = false;
 
 // ---------------------------------------------------------------
@@ -104,6 +101,7 @@ function aabb(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.
 let globalCoins = parseInt(localStorage.getItem('pf_coins')||'0');
 let savedUnlocked = JSON.parse(localStorage.getItem('pf_unlocked_v2')||'null');
 let unlockedItems = [true,false,false,false,false,false,false,false,true,false,false,false];
+let globalUpgrades = JSON.parse(localStorage.getItem('pf_upgrades')||'{"hp":0, "armor":0, "dmg":0}');
 
 if(savedUnlocked){ 
     for(let i=0;i<Math.min(savedUnlocked.length,12);i++) unlockedItems[i] = savedUnlocked[i]; 
@@ -132,6 +130,7 @@ function saveGlobal() {
   localStorage.setItem('pf_unlocked_v2', JSON.stringify(unlockedItems));
   localStorage.setItem('pf_equip_v2', equippedGun);
   localStorage.setItem('pf_skin_v2', equippedSkin);
+  localStorage.setItem('pf_upgrades', JSON.stringify(globalUpgrades));
 }
 function addCombo() { combo++; comboTimer = 3.5; }
 
@@ -574,11 +573,14 @@ function resetPlayer(){
   combo = 0; comboTimer = 0; nightmareTimer = 30.0;
   
   shopStats.gunTier.level = isPractice ? 0 : equippedGun; 
-  shopStats.dmg.level=0; shopStats.dmg.cost=50; shopStats.dmg.val=35;
+  
+  // 글로벌 업그레이드 적용
+  shopStats.dmg.level=0; shopStats.dmg.cost=50; shopStats.dmg.val = 35 + (globalUpgrades.dmg * 2);
+  shopStats.maxHp.level=0; shopStats.maxHp.cost=80; shopStats.maxHp.val = 100 + (globalUpgrades.hp * 5);
+  shopStats.armor.level=0; shopStats.armor.cost=100; shopStats.armor.val = 0 + (globalUpgrades.armor * 0.02);
+
   shopStats.ammo.level=0; shopStats.ammo.cost=40; shopStats.ammo.val=10; 
   shopStats.reload.level=0; shopStats.reload.cost=60; shopStats.reload.val=1.1;
-  shopStats.maxHp.level=0; shopStats.maxHp.cost=80; shopStats.maxHp.val=100; 
-  shopStats.armor.level=0; shopStats.armor.cost=100; shopStats.armor.val=0;
   shopStats.speed.level=0; shopStats.speed.cost=50; shopStats.speed.val=250;
   
   shopStats.heal.cost = (difficultyMode === 'nightmare' || difficultyMode === 'hell') ? 40 : 30;
@@ -673,7 +675,7 @@ function drawBullets(){
       ctx.fillStyle = '#ffff00'; ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = '#ffaa00'; ctx.fillRect(bx - (b.vx>0?15:-5), by - 2, 10, 4);
     } else if (b.type === 'sniper_player') {
-      ctx.fillStyle = '#ffaa00'; ctx.fillRect(bx - 15, by - 2, 30, 4);
+      ctx.fillStyle = '#0088ff'; ctx.fillRect(bx - 15, by - 2, 30, 4);
       ctx.fillStyle = '#ffffff'; ctx.fillRect(bx - 10, by - 1, 20, 2);
     } else if (b.type === 'plasma_player') {
       ctx.fillStyle = '#00ffaa'; ctx.beginPath(); ctx.arc(bx, by, 8, 0, Math.PI*2); ctx.fill();
@@ -1164,7 +1166,9 @@ function updatePlayer(dt){
       let tier = shopStats.gunTier.level; let bSpeed = 800; 
       let bType = player.classId === 3 ? 'lightning' : 'normal';
       let bSpeedMod = player.classId === 3 ? 1.5 : 1.0;
+      
       let pColors = player.classId === 3 ? ['#00ffff','#00aaff','#ffffff'] : ['#ffe27a','#ffb347','#fff2c2'];
+      if(tier === 4) pColors = ['#0088ff', '#00ffff', '#ffffff'];
       
       if(difficultyMode === 'hell'){
           bType = 'hellfire';
@@ -1319,46 +1323,139 @@ function handleSettingsInput(){
   else if(keys['KeyB']) { gameState = 'title'; }
 }
 
-const LOBBY_ITEMS = [
-  {type:'gun', id:0, name:'REVOLVER', cost:0, desc:'기본 권총'},
-  {type:'gun', id:1, name:'TWIN GUN', cost:500, desc:'위아래 두 발'},
-  {type:'gun', id:2, name:'SHOTGUN', cost:1500, desc:'산탄 발사'},
-  {type:'gun', id:3, name:'MINIGUN', cost:3000, desc:'빠른 연사'},
-  {type:'gun', id:4, name:'SNIPER', cost:6000, desc:'초고속 정밀관통'},
-  {type:'gun', id:5, name:'PLASMA', cost:10000, desc:'강력한 폭발구'},
-  {type:'skill', id:6, name:'DYNAMITE', cost:5000, desc:'[Q] 투척 (쿨 5s)'},
-  {type:'skill', id:7, name:'DOUBLE JUMP', cost:10000, desc:'이단 점프 패시브'},
-  {type:'skin', id:8, name:'CLASS: SHERIFF', cost:0, desc:'골드 획득 15% 증가', skinIdx:0},
-  {type:'skin', id:9, name:'CLASS: BANDIT', cost:10000, desc:'이속상승 2단점프', skinIdx:1},
-  {type:'skin', id:10, name:'CLASS: CYBORG', cost:10000, desc:'체력 대폭증가', skinIdx:2},
-  {type:'skin', id:11, name:'STORMBRINGER', cost:15000, desc:'관통 번개 마법사', skinIdx:3}
+const LOBBY_TABS = [
+  { id: 'WEAPONS', items: [
+      {type:'gun', id:0, name:'REVOLVER', cost:0, desc:'기본 권총'},
+      {type:'gun', id:1, name:'TWIN GUN', cost:500, desc:'위아래 두 발'},
+      {type:'gun', id:2, name:'SHOTGUN', cost:1500, desc:'강력한 산탄 발사'},
+      {type:'gun', id:3, name:'MINIGUN', cost:3000, desc:'빠른 연사'},
+      {type:'gun', id:4, name:'SNIPER', cost:6000, desc:'초고속 정밀관통'},
+      {type:'gun', id:5, name:'PLASMA', cost:10000, desc:'강력한 폭발구'}
+  ]},
+  { id: 'CLASSES', items: [
+      {type:'skin', id:8, name:'SHERIFF', cost:0, desc:'골드 획득 15% 증가', skinIdx:0},
+      {type:'skin', id:9, name:'BANDIT', cost:10000, desc:'이속상승 2단점프', skinIdx:1},
+      {type:'skin', id:10, name:'CYBORG', cost:10000, desc:'체력 대폭증가', skinIdx:2},
+      {type:'skin', id:11, name:'STORMBRINGER', cost:15000, desc:'관통 번개 마법사', skinIdx:3}
+  ]},
+  { id: 'UPGRADES', items: [
+      {type:'skill', id:6, name:'DYNAMITE', cost:5000, desc:'[Q] 투척 (쿨 5s)'},
+      {type:'skill', id:7, name:'DOUBLE JUMP', cost:10000, desc:'이단 점프 패시브'},
+      {type:'upgrade', stat:'hp', name:'BASE HP UP', costBase:1000, maxLvl:10, desc:'영구 체력 +5'},
+      {type:'upgrade', stat:'armor', name:'BASE ARMOR', costBase:1500, maxLvl:10, desc:'영구 피해감소 +2%'},
+      {type:'upgrade', stat:'dmg', name:'BASE DMG', costBase:1200, maxLvl:10, desc:'영구 피해량 +2'}
+  ]}
 ];
-let lobbyCursor = 0;
+
+let currentLobbyTab = 0;
+let lobbyCursors = [0, 0, 0];
+
 function drawLobbyShop(){
-  ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H); ctx.textAlign='center'; ctx.fillStyle='#ffcf6a'; ctx.font='bold 40px monospace'; ctx.fillText('LOBBY (WEAPONS & CLASSES)', W/2, 60);
-  ctx.fillStyle='#ffd700'; ctx.font='bold 20px monospace'; ctx.fillText(`GLOBAL COINS: ${globalCoins}`, W/2, 95); ctx.fillStyle='#ffe27a'; ctx.font='14px monospace'; ctx.fillText('W/A/S/D 선택 | SPACE 구매/장착 | B 뒤로가기', W/2, 120);
-  for(let i=0; i<12; i++){
-    let col = i % 4; let row = Math.floor(i / 4); let bx = 35 + col*225; let by = 135 + row*120; let bw=215, bh=110;
-    if(lobbyCursor === i){ ctx.strokeStyle='#ff6a2a'; ctx.lineWidth=6; ctx.strokeRect(bx-5, by-5, bw+10, bh+10); ctx.fillStyle='rgba(255,100,40,0.2)'; ctx.fillRect(bx, by, bw, bh); }
+  ctx.fillStyle='#0f0905'; ctx.fillRect(0,0,W,H); 
+  ctx.textAlign='center'; 
+  
+  // 탭 헤더
+  ctx.font='bold 26px monospace';
+  for(let t=0; t<LOBBY_TABS.length; t++) {
+      let tx = W/2 - 250 + t*250;
+      ctx.fillStyle = currentLobbyTab === t ? '#ffcf6a' : '#555';
+      ctx.fillText(LOBBY_TABS[t].id, tx, 50);
+      if(currentLobbyTab === t) {
+          ctx.fillStyle = '#ff6a2a';
+          ctx.fillRect(tx - 40, 60, 80, 4);
+      }
+  }
+
+  ctx.fillStyle='#ffd700'; ctx.font='bold 20px monospace'; ctx.fillText(`GLOBAL COINS: ${globalCoins}`, W/2, 95); 
+  ctx.fillStyle='#ffe27a'; ctx.font='14px monospace'; ctx.fillText('[Q]/[E] 탭 전환 | W/A/S/D 선택 | SPACE 구매/장착 | B 뒤로가기', W/2, 120);
+  
+  let list = LOBBY_TABS[currentLobbyTab].items;
+  let c = lobbyCursors[currentLobbyTab];
+  
+  for(let i=0; i<list.length; i++){
+    let col = i % 4; let row = Math.floor(i / 4); 
+    let bx = 35 + col*225; let by = 145 + row*120; let bw=215, bh=110;
+    
+    if(c === i){ ctx.strokeStyle='#ff6a2a'; ctx.lineWidth=6; ctx.strokeRect(bx-5, by-5, bw+10, bh+10); ctx.fillStyle='rgba(255,100,40,0.2)'; ctx.fillRect(bx, by, bw, bh); }
     ctx.strokeStyle='#5c3d22'; ctx.lineWidth=4; ctx.strokeRect(bx, by, bw, bh); ctx.fillStyle='#1a1004'; ctx.fillRect(bx, by, bw, bh);
-    let it = LOBBY_ITEMS[i]; ctx.fillStyle = (it.type==='gun') ? '#ffb347' : '#ff3a3a'; if(it.type === 'skin') ctx.fillStyle = '#6ad1ff';
-    ctx.font='bold 16px monospace'; ctx.fillText(it.name, bx+bw/2, by+30); ctx.fillStyle = '#d8c8a0'; ctx.font='11px monospace'; ctx.fillText(it.desc, bx+bw/2, by+55);
-    if(unlockedItems[it.id]){
-      if((it.type==='gun' && equippedGun===it.id) || (it.type==='skin' && equippedSkin===it.skinIdx)){ ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('EQUIPPED', bx+bw/2, by+85); } else if(it.type==='skill') { ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+85); } else { ctx.fillStyle='#fff'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+80); ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Equip', bx+bw/2, by+98); }
-    } else { ctx.fillStyle = globalCoins >= it.cost ? '#00ff00' : '#ff0000'; ctx.font='bold 16px monospace'; ctx.fillText(`COST: ${it.cost}`, bx+bw/2, by+80); ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Buy', bx+bw/2, by+98); }
-  } ctx.textAlign='left';
+    
+    let it = list[i]; 
+    if(it.type === 'upgrade') {
+        let lvl = globalUpgrades[it.stat];
+        let cost = Math.floor(it.costBase * Math.pow(1.5, lvl));
+        ctx.fillStyle = '#00ffaa'; ctx.font='bold 16px monospace'; ctx.fillText(it.name, bx+bw/2, by+30);
+        ctx.fillStyle = '#d8c8a0'; ctx.font='11px monospace'; ctx.fillText(it.desc, bx+bw/2, by+55);
+        
+        if(lvl >= it.maxLvl) {
+            ctx.fillStyle='#888'; ctx.font='bold 16px monospace'; ctx.fillText(`Lv.MAX`, bx+bw/2, by+85);
+        } else {
+            ctx.fillStyle = globalCoins >= cost ? '#00ff00' : '#ff0000'; ctx.font='bold 16px monospace'; ctx.fillText(`COST: ${cost}`, bx+bw/2, by+80); 
+            ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText(`Lv.${lvl}/${it.maxLvl} -> SPACE`, bx+bw/2, by+98);
+        }
+    } else {
+        ctx.fillStyle = (it.type==='gun') ? '#ffb347' : '#ff3a3a'; if(it.type === 'skin') ctx.fillStyle = '#6ad1ff';
+        ctx.font='bold 16px monospace'; ctx.fillText(it.name, bx+bw/2, by+30); 
+        ctx.fillStyle = '#d8c8a0'; ctx.font='11px monospace'; ctx.fillText(it.desc, bx+bw/2, by+55);
+        
+        if(unlockedItems[it.id]){
+          if((it.type==='gun' && equippedGun===it.id) || (it.type==='skin' && equippedSkin===it.skinIdx)){ 
+              ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('EQUIPPED', bx+bw/2, by+85); 
+          } else if(it.type==='skill') { 
+              ctx.fillStyle='#00ff00'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+85); 
+          } else { 
+              ctx.fillStyle='#fff'; ctx.font='bold 16px monospace'; ctx.fillText('UNLOCKED', bx+bw/2, by+80); 
+              ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Equip', bx+bw/2, by+98); 
+          }
+        } else { 
+            ctx.fillStyle = globalCoins >= it.cost ? '#00ff00' : '#ff0000'; ctx.font='bold 16px monospace'; ctx.fillText(`COST: ${it.cost}`, bx+bw/2, by+80); 
+            ctx.fillStyle='#a8862a'; ctx.font='11px monospace'; ctx.fillText('Press SPACE to Buy', bx+bw/2, by+98); 
+        }
+    }
+  } 
+  ctx.textAlign='left';
 }
 function handleLobbyShopInput(){
-  if(keys['KeyA'] && !keyLeftLast) lobbyCursor = Math.max(0, lobbyCursor-1); 
-  if(keys['KeyD'] && !keyRightLast) lobbyCursor = Math.min(11, lobbyCursor+1);
-  if(keys['KeyW'] && !keyUpLast) lobbyCursor = Math.max(0, lobbyCursor-4); 
-  if(keys['KeyS'] && !keyDownLast) lobbyCursor = Math.min(11, lobbyCursor+4);
-  
-  if(keys['Space'] && !spacePressedLast){
-    let it = LOBBY_ITEMS[lobbyCursor];
-    if(unlockedItems[it.id]){ if(it.type==='gun') equippedGun = it.id; if(it.type==='skin') equippedSkin = it.skinIdx; saveGlobal(); playSnd('coin');
-    } else { if(globalCoins >= it.cost){ globalCoins -= it.cost; unlockedItems[it.id] = true; if(it.type==='gun') equippedGun = it.id; if(it.type==='skin') equippedSkin = it.skinIdx; saveGlobal(); playSnd('coin'); } else { playSnd('hit'); } }
-    spacePressedLast = true;
+  let list = LOBBY_TABS[currentLobbyTab].items;
+  let c = lobbyCursors[currentLobbyTab];
+    
+  if(keys['KeyQ'] && !qPressedLast) { currentLobbyTab = (currentLobbyTab - 1 + LOBBY_TABS.length) % LOBBY_TABS.length; playSnd('hit'); }
+  if(keys['KeyE'] && !ePressedLast) { currentLobbyTab = (currentLobbyTab + 1) % LOBBY_TABS.length; playSnd('hit'); }
+
+  if(keys['KeyA'] && !keyLeftLast) c = Math.max(0, c-1);
+  if(keys['KeyD'] && !keyRightLast) c = Math.min(list.length-1, c+1);
+  if(keys['KeyW'] && !keyUpLast) c = Math.max(0, c-4); 
+  if(keys['KeyS'] && !keyDownLast) c = Math.min(list.length-1, c+4);
+
+  lobbyCursors[currentLobbyTab] = c;
+
+  if(keys['Space'] && !spacePressedLast) {
+      let it = list[c];
+      if(it.type === 'upgrade') {
+          let lvl = globalUpgrades[it.stat];
+          if(lvl < it.maxLvl) {
+              let cost = Math.floor(it.costBase * Math.pow(1.5, lvl));
+              if(globalCoins >= cost) {
+                  globalCoins -= cost;
+                  globalUpgrades[it.stat]++;
+                  saveGlobal(); playSnd('coin');
+              } else playSnd('hit');
+          } else playSnd('hit');
+      } else {
+          if(unlockedItems[it.id]){ 
+              if(it.type==='gun') equippedGun = it.id; 
+              if(it.type==='skin') equippedSkin = it.skinIdx; 
+              saveGlobal(); playSnd('coin');
+          } else { 
+              if(globalCoins >= it.cost){ 
+                  globalCoins -= it.cost; 
+                  unlockedItems[it.id] = true; 
+                  if(it.type==='gun') equippedGun = it.id; 
+                  if(it.type==='skin') equippedSkin = it.skinIdx; 
+                  saveGlobal(); playSnd('coin'); 
+              } else { playSnd('hit'); } 
+          }
+      }
+      spacePressedLast = true;
   }
   if(keys['KeyB'] && !bPressedLast){ gameState = 'title'; bPressedLast = true; }
 }
@@ -1531,7 +1628,7 @@ function loop(now){
   if(gameState==='title' || gameState==='gameover'){
     if(spaceJustPressed) { isPractice=false; gameState = 'diff_select'; mapCursor=0; }
     if(keys['KeyS'] && gameState==='title' && !sPressedLast) { gameState = 'settings'; settingsCursor=0; }
-    if(keys['KeyL'] && gameState==='title' && !lPressedLast) { gameState = 'lobby_shop'; lobbyCursor=0; }
+    if(keys['KeyL'] && gameState==='title' && !lPressedLast) { gameState = 'lobby_shop'; currentLobbyTab=0; }
     if(keys['KeyP'] && gameState==='title' && !pPressedLast) {
         isPractice = true;
         difficultyMode = 'normal';
@@ -1568,7 +1665,7 @@ function loop(now){
   
   spacePressedLast = spaceDown; keyLeftLast = !!keys['KeyA']; keyRightLast = !!keys['KeyD']; 
   keyUpLast = !!keys['KeyW']; keyDownLast = !!keys['KeyS']; lPressedLast = !!keys['KeyL']; jumpPressedLast = !!keys[actionKeys.jump]; qPressedLast = !!keys['KeyQ'];
-  pPressedLast = !!keys['KeyP']; escPressedLast = !!keys['Escape'];
+  pPressedLast = !!keys['KeyP']; escPressedLast = !!keys['Escape']; ePressedLast = !!keys['KeyE'];
 
   render(); requestAnimationFrame(loop);
 }
